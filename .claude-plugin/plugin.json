@@ -1,12 +1,12 @@
 {
   "name": "patrol",
-  "description": "Development discipline enforcement for Claude Code — stop band-aiding, investigate first, verify before done",
-  "version": "2.0.0",
+  "description": "Policy engine & development master for Claude Code — rules, workflows, safety",
+  "version": "3.0.0-alpha.1",
   "author": {
     "name": "cukas"
   },
   "homepage": "https://github.com/cukas/patrol",
   "repository": "https://github.com/cukas/patrol",
   "license": "MIT",
-  "keywords": ["discipline", "investigation", "debugging", "verification", "band-aid", "root-cause", "quality"]
+  "keywords": ["policy", "rules", "safety", "workflow", "investigation", "debugging", "verification", "quality"]
 }
