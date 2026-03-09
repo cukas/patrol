@@ -1,0 +1,48 @@
+name: Feature Request
+description: Suggest a new rule, trigger type, or enhancement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: What are you trying to do that Patrol doesn't support yet?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How should this work? Include example rule JSON if applicable.
+      placeholder: |
+        Example rule:
+        {
+          "id": "my-rule",
+          "level": "warn",
+          "trigger": { "type": "...", "match": "..." },
+          "message": "..."
+        }
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - New rule template
+        - New trigger type
+        - New require condition
+        - Adaptive enforcement
+        - CLI command
+        - Integration
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any other approaches you've thought about?

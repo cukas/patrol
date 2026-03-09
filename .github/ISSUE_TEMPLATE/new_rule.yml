@@ -1,0 +1,43 @@
+name: New Rule Proposal
+description: Propose a built-in rule template for Patrol
+labels: ["rule-proposal"]
+body:
+  - type: textarea
+    id: rule
+    attributes:
+      label: Rule definition
+      description: The rule in JSON format
+      render: json
+      placeholder: |
+        {
+          "id": "your-rule-id",
+          "name": "Human-readable name",
+          "category": "workflow",
+          "level": "warn",
+          "trigger": {
+            "type": "bash_command",
+            "match": "pattern"
+          },
+          "message": "Message shown when triggered."
+        }
+    validations:
+      required: true
+
+  - type: textarea
+    id: rationale
+    attributes:
+      label: Why should this be built-in?
+      description: What common mistake does this catch? Why would most teams benefit?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: level
+    attributes:
+      label: Suggested default level
+      options:
+        - inform (mention it, keep working)
+        - warn (show warning, explain what's wrong)
+        - block (refuse until requirement met)
+    validations:
+      required: true

@@ -1,0 +1,66 @@
+name: Bug Report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug. What did you expect vs what actually happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: How can we reproduce this?
+      placeholder: |
+        1. Set up rule X in .patrol/rules.json
+        2. Run Claude Code
+        3. Trigger rule by doing Y
+        4. See incorrect behavior Z
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Rule engine (lib.sh)
+        - Tool tracker (PostToolUse hook)
+        - Prompt monitor (UserPromptSubmit hook)
+        - Session start
+        - Adaptive enforcement
+        - Status line
+        - Commands (/patrol-rules, /patrol-status, etc.)
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Patrol version
+      placeholder: "3.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - WSL
+    validations:
+      required: true
+
+  - type: textarea
+    id: debug
+    attributes:
+      label: Debug log (optional)
+      description: "Set `debug: true` in `~/.patrol/config.json`, reproduce, paste relevant lines from `~/.patrol/debug.log`."
+      render: text
