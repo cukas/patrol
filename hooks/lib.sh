@@ -439,3 +439,63 @@ patrol_load_all_rules() {
 
   echo "$merged"
 }
+
+# Check if a rule's trigger matches the current tool use.
+# Args: tool_name, file_path, bash_command
+# Rule from stdin. Returns 0 if triggered, 1 if not.
+patrol_check_trigger() {
+  local tool="$1" file="$2" command="$3"
+  local rule
+  rule=$(cat)
+
+  local trigger_type trigger_match trigger_tool trigger_glob
+  trigger_type=$(echo "$rule" | jq -r '.trigger.type')
+  trigger_match=$(echo "$rule" | jq -r '.trigger.match // empty')
+  trigger_tool=$(echo "$rule" | jq -r '.trigger.tool // empty')
+  trigger_glob=$(echo "$rule" | jq -r '.trigger.glob // empty')
+
+  case "$trigger_type" in
+    bash_command)
+      [ "$tool" = "Bash" ] || return 1
+      echo "$command" | grep -qE "$trigger_match" && return 0
+      return 1
+      ;;
+    tool_use)
+      [ -n "$trigger_tool" ] && [ "$tool" != "$trigger_tool" ] && return 1
+      if [ -n "$trigger_glob" ] && [ -n "$file" ]; then
+        # Simple glob match using bash pattern
+        case "$file" in
+          $trigger_glob) return 0 ;;
+          *) return 1 ;;
+        esac
+      fi
+      [ "$tool" = "$trigger_tool" ] && return 0
+      return 1
+      ;;
+    file_changed)
+      [ -z "$file" ] && return 1
+      case "$tool" in Edit|Write|MultiEdit) ;; *) return 1 ;; esac
+      case "$file" in
+        $trigger_glob) return 0 ;;
+        *) return 1 ;;
+      esac
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# Check sequence rules (edit-without-read).
+# Args: state_dir, file_path
+# Returns 0 if file was edited but not read (i.e., violation detected).
+patrol_check_sequence() {
+  local state_dir="$1" file="$2"
+  [ -z "$file" ] && return 1
+  # Check if file was read in this session
+  if [ -f "$state_dir/reads" ] && grep -qF "$file" "$state_dir/reads"; then
+    return 1  # File was read — no violation
+  fi
+  # File not read but edited
+  return 0
+}

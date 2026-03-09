@@ -1055,6 +1055,75 @@ has_disabled=$(echo "$result" | jq '[.[] | select(.id=="disabled-rule")] | lengt
 assert_eq "patrol_load_rules excludes disabled rule" "0" "$has_disabled"
 
 
+# ── Trigger evaluation ───────────────────────────────────────
+printf "\n  Trigger evaluation:\n"
+
+# Test: bash_command trigger matches
+RULE='{"id":"t1","trigger":{"type":"bash_command","match":"git push"}}'
+result=$(echo "$RULE" | run_lib patrol_check_trigger "Bash" "" "git push origin main" 2>&1)
+ec=$?
+assert_exit_code "patrol_check_trigger matches bash_command" "0" "$ec"
+
+# Test: bash_command trigger doesn't match
+RULE='{"id":"t1","trigger":{"type":"bash_command","match":"git push"}}'
+ec=0
+echo "$RULE" | run_lib patrol_check_trigger "Bash" "" "npm test" 2>/dev/null || ec=$?
+assert_exit_code "patrol_check_trigger rejects non-matching bash" "1" "$ec"
+
+# Test: bash_command trigger doesn't match non-Bash tool
+RULE='{"id":"t1","trigger":{"type":"bash_command","match":"git push"}}'
+ec=0
+echo "$RULE" | run_lib patrol_check_trigger "Read" "" "git push" 2>/dev/null || ec=$?
+assert_exit_code "patrol_check_trigger rejects bash_command for non-Bash tool" "1" "$ec"
+
+# Test: tool_use trigger matches
+RULE='{"id":"t1","trigger":{"type":"tool_use","tool":"Edit","glob":"src/routes/**"}}'
+ec=0
+echo "$RULE" | run_lib patrol_check_trigger "Edit" "src/routes/api.ts" "" 2>&1 || ec=$?
+assert_exit_code "patrol_check_trigger matches tool_use with glob" "0" "$ec"
+
+# Test: sequence — edit without read
+SEQ_STATE="$TMPDIR_ROOT/seq-state"
+mkdir -p "$SEQ_STATE"
+echo "src/other.ts" > "$SEQ_STATE/reads"
+run_lib patrol_check_sequence "$SEQ_STATE" "src/target.ts"
+ec=$?
+assert_exit_code "patrol_check_sequence detects edit-without-read" "0" "$ec"
+
+# Test: sequence — edit after read
+SEQ_STATE2="$TMPDIR_ROOT/seq-state2"
+mkdir -p "$SEQ_STATE2"
+echo "src/target.ts" > "$SEQ_STATE2/reads"
+ec=0
+run_lib patrol_check_sequence "$SEQ_STATE2" "src/target.ts" || ec=$?
+assert_exit_code "patrol_check_sequence allows edit-after-read" "1" "$ec"
+
+# Test: tool-tracker writes violations
+reset_config
+SID="trigger-test-$$"
+reset_state "$SID"
+TRIGGER_STATE="/tmp/patrol-${SID}"
+# Set up cached rules with a bash_command rule (no require = always violates on match)
+cat > "$TRIGGER_STATE/rules.json" <<'TEOF'
+[{"id":"no-force-push","name":"No force push","category":"safety","level":"block","trigger":{"type":"bash_command","match":"git push.*--force"},"message":"No force push allowed"}]
+TEOF
+# Simulate: Bash git push --force
+run_hook tool-tracker.sh "{\"session_id\":\"$SID\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push --force origin main\"},\"cwd\":\"$PATROL_CWD\"}"
+assert_file_exists "tool-tracker writes violation on trigger match" "$TRIGGER_STATE/violations.jsonl"
+violation_rule=$(jq -r '.rule_id' "$TRIGGER_STATE/violations.jsonl" 2>/dev/null | head -1)
+assert_eq "violation has correct rule_id" "no-force-push" "$violation_rule"
+
+# Test: tool-tracker tracks bash history
+reset_config
+SID2="bash-hist-$$"
+reset_state "$SID2"
+HIST_STATE="/tmp/patrol-${SID2}"
+run_hook tool-tracker.sh "{\"session_id\":\"$SID2\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"npm test\"},\"cwd\":\"$PATROL_CWD\"}"
+assert_file_exists "tool-tracker tracks bash_history" "$HIST_STATE/bash_history"
+hist_content=$(cat "$HIST_STATE/bash_history" 2>/dev/null)
+assert_match "bash_history contains the command" "npm test" "$hist_content"
+
+
 # ══════════════════════════════════════════════════════════════
 # Summary
 # ══════════════════════════════════════════════════════════════
