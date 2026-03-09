@@ -37,17 +37,24 @@ else
   if [ "$AUTO_DETECT" = "true" ] && [ -n "$USER_MESSAGE" ]; then
     KEYWORDS=$(patrol_config "keywords" '["fix","bug","broken","error","crash","doesn'\''t work","not working"]')
     MSG_LOWER=$(echo "$USER_MESSAGE" | tr '[:upper:]' '[:lower:]')
-    KEYWORD_MATCH=$(echo "$KEYWORDS" | jq -r '.[]' 2>/dev/null | while read -r kw; do
+    KEYWORD_MATCH=""
+    while read -r kw; do
       kw_lower=$(echo "$kw" | tr '[:upper:]' '[:lower:]')
       # Use word boundary matching for single words, fixed-string for phrases
       if echo "$kw_lower" | grep -q ' '; then
         # Multi-word phrase: fixed-string match (e.g., "doesn't work")
-        echo "$MSG_LOWER" | grep -qF "$kw_lower" && { echo "1"; break; }
+        if echo "$MSG_LOWER" | grep -qF "$kw_lower"; then
+          KEYWORD_MATCH="1"
+          break
+        fi
       else
         # Single word: word boundary match (prevents "fix" matching "prefix")
-        echo "$MSG_LOWER" | grep -qwF "$kw_lower" && { echo "1"; break; }
+        if echo "$MSG_LOWER" | grep -qwF "$kw_lower"; then
+          KEYWORD_MATCH="1"
+          break
+        fi
       fi
-    done)
+    done < <(echo "$KEYWORDS" | jq -r '.[]' 2>/dev/null)
     if [ "$KEYWORD_MATCH" = "1" ]; then
       MODE="auto"
       patrol_debug "bug-fix mode auto-activated by keyword match"
