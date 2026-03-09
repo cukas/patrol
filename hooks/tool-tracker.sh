@@ -84,6 +84,7 @@ while IFS= read -r rule; do
       case "$require_type" in
         bash_ran)
           require_match=$(echo "$rule" | jq -r '.require.match // empty')
+          [ -z "$require_match" ] && { violated=false; break; }
           if [ -f "$STATE_DIR/bash_history" ] && grep -qE "$require_match" "$STATE_DIR/bash_history"; then
             violated=false
           else

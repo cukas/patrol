@@ -20,6 +20,7 @@ ENABLED=$(patrol_config "enabled" "true")
 [ "$ENABLED" = "false" ] && exit 0
 
 # Reset state for this session
+RULE_COUNT=0
 if [ -n "$SESSION_ID" ]; then
   STATE_DIR=$(patrol_state_dir "$SESSION_ID")
   rm -f "$STATE_DIR/reads" "$STATE_DIR/edits" "$STATE_DIR/verified" "$STATE_DIR/nudge-level" "$STATE_DIR/verify-nudged" "$STATE_DIR/violations.jsonl" "$STATE_DIR/bash_history" 2>/dev/null

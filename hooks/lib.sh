@@ -463,6 +463,7 @@ patrol_check_trigger() {
   case "$trigger_type" in
     bash_command)
       [ "$tool" = "Bash" ] || return 1
+      [ -z "$trigger_match" ] && return 1
       echo "$command" | grep -qE "$trigger_match" && return 0
       return 1
       ;;
@@ -480,6 +481,7 @@ patrol_check_trigger() {
       ;;
     file_changed)
       [ -z "$file" ] && return 1
+      [ -z "$trigger_glob" ] && return 1
       case "$tool" in Edit|Write|MultiEdit) ;; *) return 1 ;; esac
       case "$file" in
         $trigger_glob) return 0 ;;

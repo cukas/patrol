@@ -120,13 +120,13 @@ if [ -f "$VIOLATIONS_FILE" ] && [ -s "$VIOLATIONS_FILE" ]; then
 
     case "$v_level" in
       block)
-        BLOCK_MSGS="${BLOCK_MSGS}🚫 [${v_rule_id}] ${v_message}\n"
+        BLOCK_MSGS="${BLOCK_MSGS}$(printf '🚫 [%s] %s\n' "$v_rule_id" "$v_message")"
         ;;
       warn)
-        WARN_MSGS="${WARN_MSGS}⚠️ [${v_rule_id}] ${v_message}\n"
+        WARN_MSGS="${WARN_MSGS}$(printf '⚠️ [%s] %s\n' "$v_rule_id" "$v_message")"
         ;;
       inform)
-        INFORM_MSGS="${INFORM_MSGS}ℹ️ [${v_rule_id}] ${v_message}\n"
+        INFORM_MSGS="${INFORM_MSGS}$(printf 'ℹ️ [%s] %s\n' "$v_rule_id" "$v_message")"
         ;;
     esac
   done < "$VIOLATIONS_FILE"
@@ -137,10 +137,10 @@ if [ -f "$VIOLATIONS_FILE" ] && [ -s "$VIOLATIONS_FILE" ]; then
   # Build output message (block first, then warn, then inform)
   OUTPUT_MSG=""
   if [ -n "$BLOCK_MSGS" ]; then
-    OUTPUT_MSG="${OUTPUT_MSG}🚨 PATROL BLOCKED:\n${BLOCK_MSGS}"
+    OUTPUT_MSG="$(printf '🚨 PATROL BLOCKED:\n%s' "$BLOCK_MSGS")"
   fi
   if [ -n "$WARN_MSGS" ]; then
-    OUTPUT_MSG="${OUTPUT_MSG}🟡 PATROL WARNING:\n${WARN_MSGS}"
+    OUTPUT_MSG="$(printf '%s🟡 PATROL WARNING:\n%s' "$OUTPUT_MSG" "$WARN_MSGS")"
   fi
   if [ -n "$INFORM_MSGS" ]; then
     OUTPUT_MSG="${OUTPUT_MSG}${INFORM_MSGS}"
@@ -148,7 +148,7 @@ if [ -f "$VIOLATIONS_FILE" ] && [ -s "$VIOLATIONS_FILE" ]; then
 
   if [ -n "$OUTPUT_MSG" ]; then
     # Format as additionalContext
-    ESCAPED_MSG=$(patrol_escape_json "$(printf '%b' "$OUTPUT_MSG")")
+    ESCAPED_MSG=$(patrol_escape_json "$OUTPUT_MSG")
     cat <<EOF
 {
   "additionalContext": "${ESCAPED_MSG}"

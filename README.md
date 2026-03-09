@@ -3,7 +3,7 @@
 
   *"Learn your ways, I will. Have your back, I do."*
 
-  Rules. Workflows. Safety. One install.
+  **ESLint for Claude Code.** Rules. Workflows. Safety. One install.
 
   [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
   [![Version](https://img.shields.io/badge/version-3.0.0--alpha.1-green.svg)]()
@@ -12,7 +12,7 @@
 
 ---
 
-Patrol is a **policy engine for Claude Code**. It enforces coding rules, prevents dangerous actions, and guides better workflows — all through lightweight shell hooks with zero token cost during normal coding.
+Patrol is a **policy engine for Claude Code** — think ESLint, but for AI coding behavior. It enforces coding rules, prevents dangerous actions, and guides better workflows — all through lightweight shell hooks with zero token cost during normal coding.
 
 ```
 Three layers of protection:
@@ -404,6 +404,12 @@ Workflow skills (`/trace-fix`, `/build-guard`, `/review-gate`) are now built int
 Yes. They complement each other — Remembrall manages context lifecycle, Patrol enforces development discipline. Both use separate state directories and hooks with no conflicts.
 
 </details>
+
+## Roadmap: v4 — Adaptive Rules
+
+Rules that learn from your behavior. If you haven't triggered `read-before-edit` in three weeks, Patrol drops it from `warn` to `inform`. If a team keeps hitting `test-before-push`, it escalates to `block`. Enforcement levels that adapt based on violation history — automatic, per-developer, per-rule.
+
+Coming after v3.0 stabilizes.
 
 ## License
 
