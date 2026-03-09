@@ -8,13 +8,13 @@
   "plugins": [
     {
       "name": "patrol",
-      "description": "Stop band-aiding. Investigate first. Verify before done.",
-      "version": "1.1.0",
+      "description": "Development discipline with status line — two-tier enforcement, real-time read/edit tracking, investigation gate",
+      "version": "2.0.0",
       "author": {
         "name": "cukas"
       },
       "source": "./",
-      "category": "productivity",
+      "category": "development",
       "homepage": "https://github.com/cukas/patrol",
       "tags": ["discipline", "investigation", "debugging", "verification", "quality", "root-cause"]
     }
