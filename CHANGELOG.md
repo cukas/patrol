@@ -5,6 +5,29 @@ All notable changes to Patrol will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v2.0.0 — 2026-03-09
+
+### Added
+- **Status line indicator** — real-time adaptive display showing read/edit counts, mode, and escalation level
+- **Two-tier enforcement** — light mode (always-on, nudge only) + full mode (bugfix, full escalation)
+- **`/patrol-keywords`** — manage custom trigger keywords (list/add/remove/reset)
+- **`always_on` config** — light discipline enforcement even outside bugfix sessions (default: true)
+- **`easter_eggs` config** — opt-in Yoda-themed messages
+- **`custom_keywords` config** — extend default keywords without replacing them
+- **Rich `/patrol-status` dashboard** — box-drawn display with mode, tier, health, verification
+- **Hero image** — shield sentinel visual identity
+
+### Changed
+- Startup banner condensed to single line (status line carries the detail now)
+- `/patrol-help` updated with two-tier model and new commands
+- Keyword matching now uses merged defaults + custom_keywords
+- Verify check respects tier (active in both light and full mode)
+
+### Migration from v1.x
+- No breaking changes. Existing config continues to work.
+- `keywords` config still works but `custom_keywords` is preferred (extends defaults instead of replacing).
+- Set `always_on: false` to restore v1.x behavior (silent until bugfix detected).
+
 ## [1.1.0] - 2026-03-09
 
 ### Added
