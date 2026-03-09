@@ -1209,6 +1209,59 @@ result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$ENF_SID\",\"cwd\":\"$PAT
 assert_match "v2 investigation gate still works when no violations" "edited without being read" "$result"
 
 
+# ── Session start rule loading ───────────────────────────────
+printf "\n  Session start rule loading:\n"
+
+# Test: session-start caches merged rules to state dir
+SS_SID="ss-rules-$$"
+reset_config
+reset_state "$SS_SID"
+SS_STATE="/tmp/patrol-${SS_SID}"
+# Create a repo rules file
+mkdir -p "$PATROL_CWD/.patrol"
+cat > "$PATROL_CWD/.patrol/rules.json" <<'SSEOF'
+{"version":"3.0","rules":[{"id":"test-r","name":"T","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"git push"},"message":"m"}]}
+SSEOF
+run_hook session-start.sh "{\"session_id\":\"$SS_SID\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+assert_file_exists "session-start caches rules.json" "$SS_STATE/rules.json"
+count=$(jq 'length' "$SS_STATE/rules.json" 2>/dev/null || echo "0")
+assert_match "cached rules include repo + safety rules" "^[1-9]" "$count"
+
+# Test: rules.json includes safety rules even without repo rules
+SS_SID2="ss-safety-$$"
+reset_config
+reset_state "$SS_SID2"
+SS_STATE2="/tmp/patrol-${SS_SID2}"
+rm -f "$PATROL_CWD/.patrol/rules.json" 2>/dev/null
+run_hook session-start.sh "{\"session_id\":\"$SS_SID2\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+assert_file_exists "rules.json exists even without repo rules" "$SS_STATE2/rules.json"
+safety_count=$(jq '[.[] | select(.id | startswith("_safety-"))] | length' "$SS_STATE2/rules.json" 2>/dev/null || echo "0")
+assert_match "safety rules cached by default" "^[1-9]" "$safety_count"
+
+# Test: violations and bash_history cleared on session start
+SS_SID3="ss-clear-$$"
+reset_config
+reset_state "$SS_SID3"
+SS_STATE3="/tmp/patrol-${SS_SID3}"
+echo '{"rule_id":"old","level":"warn","message":"stale"}' > "$SS_STATE3/violations.jsonl"
+echo "old command" > "$SS_STATE3/bash_history"
+run_hook session-start.sh "{\"session_id\":\"$SS_SID3\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+assert_file_not_exists "violations cleared on session start" "$SS_STATE3/violations.jsonl"
+assert_file_not_exists "bash_history cleared on session start" "$SS_STATE3/bash_history"
+
+# Test: banner shows rule count
+SS_SID4="ss-banner-$$"
+reset_config
+reset_state "$SS_SID4"
+cat > "$PATROL_CWD/.patrol/rules.json" <<'SSEOF2'
+{"version":"3.0","rules":[{"id":"test-r","name":"T","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"x"},"message":"m"}]}
+SSEOF2
+result=$(run_hook session-start.sh "{\"session_id\":\"$SS_SID4\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}")
+assert_match "banner shows rule count" "rules loaded" "$result"
+# Clean up
+rm -f "$PATROL_CWD/.patrol/rules.json" 2>/dev/null
+
+
 # ══════════════════════════════════════════════════════════════
 # Summary
 # ══════════════════════════════════════════════════════════════
