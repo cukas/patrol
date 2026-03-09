@@ -60,6 +60,14 @@ EASTER_EGGS=$(jq -r '.easter_eggs // false' "$HOME/.patrol/config.json" 2>/dev/n
 THRESHOLD=$(jq -r '.band_aid_threshold // 3' "$HOME/.patrol/config.json" 2>/dev/null || echo "3")
 AUTO_DETECT=$(jq -r '.auto_detect_bugfix // true' "$HOME/.patrol/config.json" 2>/dev/null || echo "true")
 
+# Adaptive
+ADAPTIVE=$(jq -r '.adaptive // true' "$HOME/.patrol/config.json" 2>/dev/null || echo "true")
+if [ "$ADAPTIVE" = "true" ] && [ -f "$HOME/.patrol/history.json" ]; then
+  ADAPTIVE_DATA=$(jq -r '.rules | to_entries[] | "\(.key) \(.value.score) \(.value.total_violations) \(.value.last_violation)"' "$HOME/.patrol/history.json" 2>/dev/null || echo "")
+else
+  ADAPTIVE_DATA=""
+fi
+
 echo "MODE=$MODE"
 echo "TIER=$TIER"
 echo "READS=$READ_COUNT"
@@ -72,6 +80,10 @@ echo "ALWAYS_ON=$ALWAYS_ON"
 echo "EASTER_EGGS=$EASTER_EGGS"
 echo "THRESHOLD=$THRESHOLD"
 echo "AUTO_DETECT=$AUTO_DETECT"
+echo "ADAPTIVE=$ADAPTIVE"
+echo "ADAPTIVE_DATA<<EOF"
+echo "$ADAPTIVE_DATA"
+echo "EOF"
 ```
 
 Present the output as this formatted dashboard (fill in actual values):
@@ -88,6 +100,11 @@ Present the output as this formatted dashboard (fill in actual values):
 ├─────────────────────────────────────────────────┤
 │  always_on: {val} | easter_eggs: {val}          │
 │  threshold: {val} | auto_detect: {val}          │
+├─────────────────────────────────────────────────┤
+│  Adaptive: {on/off}                             │
+│                                                 │
+│  {rule_id}  score: {score}  violations: {total} │
+│    → {level_status}                             │
 ╰─────────────────────────────────────────────────╯
 ```
 
@@ -110,3 +127,13 @@ Nudge level in Health line:
 Verify status:
 - "never" → `⏳ no build/test run yet`
 - time value → `✅ {time}`
+
+Adaptive section:
+- Only show the adaptive section (between `├───┤` and `╰───╯`) when `ADAPTIVE=true` and `ADAPTIVE_DATA` is non-empty
+- If `ADAPTIVE=false` or no history exists, close the box with `╰───╯` right after the config lines
+- Each line of `ADAPTIVE_DATA` has format: `{rule_id} {score} {total_violations} {last_violation}`
+- Show one block per rule with score, violation count, and level status
+- Level status:
+  - score > 5.0 → `↑ escalated`
+  - score < 0.5 → `↓ de-escalated`
+  - otherwise → `→ at anchor`
