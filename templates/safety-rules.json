@@ -1,0 +1,35 @@
+[
+  {
+    "id": "_safety-force-push-main",
+    "name": "No force-push to main",
+    "category": "safety",
+    "level": "block",
+    "trigger": { "type": "bash_command", "match": "git push.*--force.*(main|master)" },
+    "message": "Force-pushing to main/master is blocked. Use a feature branch.",
+    "enabled": true
+  },
+  {
+    "id": "_safety-rm-rf-critical",
+    "name": "No recursive delete on critical paths",
+    "category": "safety",
+    "level": "block",
+    "trigger": { "type": "bash_command", "match": "rm -rf (/|~|\\$HOME)" },
+    "message": "Recursive delete on root/home is blocked."
+  },
+  {
+    "id": "_safety-env-commit",
+    "name": "No .env commits",
+    "category": "safety",
+    "level": "block",
+    "trigger": { "type": "bash_command", "match": "git add.*\\.env[^.]" },
+    "message": "Committing .env files is blocked. Use .env.example for templates."
+  },
+  {
+    "id": "_safety-drop-database",
+    "name": "Warn on destructive database ops",
+    "category": "safety",
+    "level": "warn",
+    "trigger": { "type": "bash_command", "match": "DROP (DATABASE|TABLE|SCHEMA)" },
+    "message": "Destructive database operation detected. Are you sure?"
+  }
+]

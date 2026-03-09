@@ -339,3 +339,89 @@ patrol_validate_rule() {
 
   return 0
 }
+
+# Load rules array from a rules.json file. Returns JSON array.
+patrol_load_rules() {
+  local file="$1"
+  [ ! -f "$file" ] && echo "[]" && return 0
+  local rules
+  rules=$(jq -r '.rules // []' "$file" 2>/dev/null) || { echo "[]"; return 0; }
+  # Validate each rule, filter out invalid ones
+  local valid_rules="[]"
+  while IFS= read -r rule; do
+    if echo "$rule" | patrol_validate_rule 2>/dev/null; then
+      valid_rules=$(echo "$valid_rules" | jq --argjson r "$rule" '. + [$r]')
+    else
+      patrol_debug "skipping invalid rule: $(echo "$rule" | jq -r '.id // "unknown"')"
+    fi
+  done < <(echo "$rules" | jq -c '.[]')
+  echo "$valid_rules"
+}
+
+# Merge three layers of rules. Returns merged JSON array.
+# Company (base) <- Repo (overrides) <- Personal (extends, cannot weaken)
+patrol_merge_rules() {
+  local company="${1:-[]}" repo="${2:-[]}" personal="${3:-[]}"
+
+  # Level strength for comparison
+  local level_order='{"inform":1,"warn":2,"block":3}'
+
+  # Start with company rules
+  local merged="$company"
+
+  # Repo overrides company (can strengthen or weaken)
+  merged=$(jq -n --argjson base "$merged" --argjson overlay "$repo" '
+    ($base | map({key: .id, value: .}) | from_entries) as $base_map |
+    ($overlay | map({key: .id, value: .}) | from_entries) as $overlay_map |
+    ($base_map + $overlay_map) | to_entries | map(.value)
+  ')
+
+  # Personal extends but cannot weaken (level must be >= existing)
+  merged=$(jq -n --argjson base "$merged" --argjson overlay "$personal" --argjson levels "$level_order" '
+    ($base | map({key: .id, value: .}) | from_entries) as $base_map |
+    reduce ($overlay | .[]) as $rule ($base_map;
+      if .[$rule.id] then
+        # Rule exists — only override if personal level is >= base level
+        if ($levels[$rule.level] // 0) >= ($levels[.[$rule.id].level] // 0)
+        then . + {($rule.id): $rule}
+        else .
+        end
+      else
+        # New rule — add it
+        . + {($rule.id): $rule}
+      end
+    ) | to_entries | map(.value)
+  ')
+
+  echo "$merged"
+}
+
+# Load all rules from all layers + built-in safety. Returns merged JSON array.
+patrol_load_all_rules() {
+  local company_file="${PATROL_COMPANY_RULES:-$HOME/.patrol/company.json}"
+  local repo_file="${PATROL_REPO_RULES:-.patrol/rules.json}"
+  local personal_file="${PATROL_PERSONAL_RULES:-$HOME/.patrol/my-rules.json}"
+
+  local company repo personal safety
+  company=$(patrol_load_rules "$company_file")
+  repo=$(patrol_load_rules "$repo_file")
+  personal=$(patrol_load_rules "$personal_file")
+
+  # Built-in safety rules (from templates dir relative to script)
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local safety_file="$script_dir/../templates/safety-rules.json"
+  if [ -f "$safety_file" ]; then
+    safety=$(jq '.' "$safety_file" 2>/dev/null || echo "[]")
+  else
+    safety="[]"
+  fi
+
+  # Merge: safety (base) <- company <- repo <- personal
+  local merged
+  merged=$(patrol_merge_rules "$safety" "$company" "[]")
+  merged=$(patrol_merge_rules "$merged" "$repo" "[]")
+  merged=$(patrol_merge_rules "$merged" "[]" "$personal")
+
+  echo "$merged"
+}

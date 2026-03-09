@@ -980,6 +980,54 @@ ec=0
 echo "$BAD_REQUIRE" | run_lib patrol_validate_rule 2>/dev/null || ec=$?
 assert_exit_code "patrol_validate_rule rejects invalid require type" "1" "$ec"
 
+# ── Loading & merging ────────────────────────────────────────
+printf "\n  Loading & merging:\n"
+
+# Test: load rules from single file
+RULES_FILE="$TMPDIR_ROOT/rules-load-test.json"
+cat > "$RULES_FILE" <<'REOF'
+{
+  "version": "3.0",
+  "rules": [
+    {"id":"test-rule","name":"Test","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"git push"},"message":"msg"}
+  ]
+}
+REOF
+result=$(run_lib patrol_load_rules "$RULES_FILE")
+count=$(echo "$result" | jq 'length')
+assert_eq "patrol_load_rules reads rules from file" "1" "$count"
+
+# Test: load from nonexistent file returns empty array
+result=$(run_lib patrol_load_rules "/nonexistent/path.json")
+assert_eq "patrol_load_rules returns [] for missing file" "[]" "$result"
+
+# Test: merge prioritizes repo over company
+COMPANY='[{"id":"r1","name":"R1","category":"safety","level":"inform","trigger":{"type":"bash_command","match":"x"},"message":"company"}]'
+REPO='[{"id":"r1","name":"R1","category":"safety","level":"block","trigger":{"type":"bash_command","match":"x"},"message":"repo"}]'
+merged=$(run_lib patrol_merge_rules "$COMPANY" "$REPO" "[]")
+level=$(echo "$merged" | jq -r '.[0].level')
+assert_eq "patrol_merge_rules repo overrides company level" "block" "$level"
+
+# Test: personal rules can add but not weaken
+REPO='[{"id":"r1","name":"R1","category":"safety","level":"block","trigger":{"type":"bash_command","match":"x"},"message":"repo"}]'
+PERSONAL='[{"id":"r1","name":"R1","category":"safety","level":"inform","trigger":{"type":"bash_command","match":"x"},"message":"weak"}]'
+merged=$(run_lib patrol_merge_rules "[]" "$REPO" "$PERSONAL")
+level=$(echo "$merged" | jq -r '.[] | select(.id=="r1") | .level')
+assert_eq "patrol_merge_rules personal cannot weaken repo" "block" "$level"
+
+# Test: personal rules can add new rules
+REPO='[{"id":"r1","name":"R1","category":"safety","level":"warn","trigger":{"type":"bash_command","match":"x"},"message":"repo"}]'
+PERSONAL='[{"id":"r2","name":"R2","category":"custom","level":"inform","trigger":{"type":"keyword","match":["todo"]},"message":"personal"}]'
+merged=$(run_lib patrol_merge_rules "[]" "$REPO" "$PERSONAL")
+count=$(echo "$merged" | jq 'length')
+assert_eq "patrol_merge_rules personal can add new rules" "2" "$count"
+
+# Test: safety rules always injected
+PATROL_COMPANY_RULES="" PATROL_REPO_RULES="" PATROL_PERSONAL_RULES=""
+result=$(run_lib patrol_load_all_rules)
+has_safety=$(echo "$result" | jq '[.[] | select(.id | startswith("_safety-"))] | length')
+assert_match "patrol_load_all_rules includes built-in safety rules" "^[1-9]" "$has_safety"
+
 
 # ══════════════════════════════════════════════════════════════
 # Summary
