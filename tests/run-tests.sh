@@ -1028,6 +1028,32 @@ result=$(run_lib patrol_load_all_rules)
 has_safety=$(echo "$result" | jq '[.[] | select(.id | startswith("_safety-"))] | length')
 assert_match "patrol_load_all_rules includes built-in safety rules" "^[1-9]" "$has_safety"
 
+# Test: safety rules cannot be weakened by repo
+REPO_WEAK='[{"id":"_safety-force-push-main","name":"Weakened","category":"safety","level":"inform","trigger":{"type":"bash_command","match":"git push"},"message":"weakened"}]'
+# Create a temp rules file for repo
+WEAK_FILE="$TMPDIR_ROOT/weak-rules.json"
+echo "{\"version\":\"3.0\",\"rules\":$(echo "$REPO_WEAK")}" > "$WEAK_FILE"
+result=$(PATROL_COMPANY_RULES="/nonexistent" PATROL_REPO_RULES="$WEAK_FILE" PATROL_PERSONAL_RULES="/nonexistent" run_lib patrol_load_all_rules)
+level=$(echo "$result" | jq -r '.[] | select(.id=="_safety-force-push-main") | .level')
+assert_eq "safety rules cannot be weakened by repo" "block" "$level"
+
+# Test: enabled:false rules are filtered out
+DISABLED_FILE="$TMPDIR_ROOT/rules-disabled-test.json"
+cat > "$DISABLED_FILE" <<'DEOF'
+{
+  "version": "3.0",
+  "rules": [
+    {"id":"active-rule","name":"Active","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"x"},"message":"active"},
+    {"id":"disabled-rule","name":"Disabled","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"y"},"message":"disabled","enabled":false}
+  ]
+}
+DEOF
+result=$(run_lib patrol_load_rules "$DISABLED_FILE")
+count=$(echo "$result" | jq 'length')
+assert_eq "patrol_load_rules filters out enabled:false rules" "1" "$count"
+has_disabled=$(echo "$result" | jq '[.[] | select(.id=="disabled-rule")] | length')
+assert_eq "patrol_load_rules excludes disabled rule" "0" "$has_disabled"
+
 
 # ══════════════════════════════════════════════════════════════
 # Summary

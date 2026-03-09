@@ -347,15 +347,26 @@ patrol_load_rules() {
   local rules
   rules=$(jq -r '.rules // []' "$file" 2>/dev/null) || { echo "[]"; return 0; }
   # Validate each rule, filter out invalid ones
-  local valid_rules="[]"
+  local valid_ndjson=""
   while IFS= read -r rule; do
     if echo "$rule" | patrol_validate_rule 2>/dev/null; then
-      valid_rules=$(echo "$valid_rules" | jq --argjson r "$rule" '. + [$r]')
+      # Skip rules with enabled: false
+      local is_enabled
+      is_enabled=$(echo "$rule" | jq -r 'if has("enabled") then .enabled else true end')
+      if [ "$is_enabled" = "false" ]; then
+        patrol_debug "skipping disabled rule: $(echo "$rule" | jq -r '.id')"
+        continue
+      fi
+      valid_ndjson="${valid_ndjson}${rule}"$'\n'
     else
       patrol_debug "skipping invalid rule: $(echo "$rule" | jq -r '.id // "unknown"')"
     fi
   done < <(echo "$rules" | jq -c '.[]')
-  echo "$valid_rules"
+  if [ -n "$valid_ndjson" ]; then
+    echo "$valid_ndjson" | jq -s '.'
+  else
+    echo "[]"
+  fi
 }
 
 # Merge three layers of rules. Returns merged JSON array.
@@ -407,21 +418,24 @@ patrol_load_all_rules() {
   repo=$(patrol_load_rules "$repo_file")
   personal=$(patrol_load_rules "$personal_file")
 
-  # Built-in safety rules (from templates dir relative to script)
+  # Built-in safety rules (from templates dir relative to script, validated)
   local script_dir
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   local safety_file="$script_dir/../templates/safety-rules.json"
-  if [ -f "$safety_file" ]; then
-    safety=$(jq '.' "$safety_file" 2>/dev/null || echo "[]")
-  else
-    safety="[]"
-  fi
+  safety=$(patrol_load_rules "$safety_file")
 
   # Merge: safety (base) <- company <- repo <- personal
   local merged
   merged=$(patrol_merge_rules "$safety" "$company" "[]")
   merged=$(patrol_merge_rules "$merged" "$repo" "[]")
   merged=$(patrol_merge_rules "$merged" "[]" "$personal")
+
+  # Safety rules always win — re-inject to prevent any layer from weakening them
+  merged=$(jq -n --argjson base "$merged" --argjson safety "$safety" '
+    ($base | map({key: .id, value: .}) | from_entries) as $base_map |
+    ($safety | map({key: .id, value: .}) | from_entries) as $safety_map |
+    ($base_map + $safety_map) | to_entries | map(.value)
+  ')
 
   echo "$merged"
 }
