@@ -5,6 +5,35 @@ All notable changes to Patrol will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v3.0.0 — 2026-03-09
+
+### Added
+- **Rule engine** — policy enforcement with 3-layer rule loading (safety < company < repo < personal)
+- **Trigger evaluation** — `bash_command`, `tool_use`, `sequence`, `file_changed` trigger types
+- **Violation enforcement** — three levels: `inform`, `warn`, `block`
+- **Adaptive enforcement** — decay-weighted scoring adjusts rule levels based on violation history (±1 from anchor, safety exempt)
+- **Per-rule adaptive bounds** — `adaptive: { min, max }` for tech leads to control adaptation range
+- **`/patrol-rules`** — list, explain, add, and disable rules
+- **Absorbed workflow skills** — `/trace-fix`, `/build-guard`, `/review-gate` now built into Patrol
+- **Investigation rules as templates** — v2 behavior (`read-before-edit`, `investigate-first`, `test-after-changes`) now expressed as customizable rules
+- **Safety rules** — `_safety-force-push-main`, `_safety-rm-rf-critical`, `_safety-env-commit`, `_safety-drop-database` (always active, cannot be disabled)
+- **Adaptive history** — persistent violation scores in `~/.patrol/history.json`
+- **Level change notifications** — one-time notification at session start when adaptive adjusts a level
+- **Demo recording scripts** — VHS tape file and fallback shell script for terminal GIF
+- **198 passing tests** — comprehensive coverage including adaptive end-to-end lifecycle
+
+### Changed
+- README repositioned as "ESLint for Claude Code"
+- `/patrol-status` dashboard now shows adaptive scores and level adjustments
+- Session-start banner shows rule count and adaptive status
+- Tool-tracker records violations in persistent history for adaptive scoring
+
+### Migration from v2.x
+- No breaking changes. All v2 features preserved.
+- Adaptive enforcement is **on by default** — set `"adaptive": false` to disable.
+- Previous investigation gate behavior now expressed as rule templates (customizable per-repo).
+- `claude-workflow-skills` users: uninstall workflow-skills, install Patrol v3. Same skills, plus rule engine.
+
 ## v2.0.0 — 2026-03-09
 
 ### Added
