@@ -1664,6 +1664,75 @@ rm -f "$HOME/.patrol/.adaptive-introduced"
 
 
 # ══════════════════════════════════════════════════════════════
+# Tool-tracker adaptive integration tests
+# ══════════════════════════════════════════════════════════════
+printf "\n▸ Tool-tracker adaptive integration tests\n\n"
+
+# Test: tool-tracker records adaptive history on violation
+TTA_SID1="tt-adaptive1-$$"
+reset_config
+reset_state "$TTA_SID1"
+rm -f "$HOME/.patrol/history.json"
+TTA_STATE1="/tmp/patrol-${TTA_SID1}"
+# Set up a cached rule that triggers on bash_command
+cat > "$TTA_STATE1/rules.json" <<'TTAEOF1'
+[{"id":"no-deploy","name":"No deploy","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"deploy"},"message":"Don't deploy yet"}]
+TTAEOF1
+# Trigger the rule via tool-tracker
+run_hook tool-tracker.sh "{\"session_id\":\"$TTA_SID1\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"deploy prod\"},\"cwd\":\"$PATROL_CWD\"}"
+# Verify history.json has score for no-deploy
+if [ -f "$HOME/.patrol/history.json" ]; then
+  ad_score=$(jq -r '.rules["no-deploy"].score // empty' "$HOME/.patrol/history.json" 2>/dev/null)
+else
+  ad_score=""
+fi
+assert_not_empty "tool-tracker records adaptive history on violation" "$ad_score"
+
+# Test: tool-tracker skips safety rules for adaptive history
+TTA_SID2="tt-adaptive2-$$"
+reset_config
+reset_state "$TTA_SID2"
+rm -f "$HOME/.patrol/history.json"
+TTA_STATE2="/tmp/patrol-${TTA_SID2}"
+# Set up a safety rule (id starts with _safety-)
+cat > "$TTA_STATE2/rules.json" <<'TTAEOF2'
+[{"id":"_safety-no-force","name":"No force push","category":"safety","level":"block","trigger":{"type":"bash_command","match":"git push.*--force"},"message":"No force push"}]
+TTAEOF2
+# Trigger the safety rule
+run_hook tool-tracker.sh "{\"session_id\":\"$TTA_SID2\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push --force origin main\"},\"cwd\":\"$PATROL_CWD\"}"
+# Verify NO history entry for _safety- rule
+if [ -f "$HOME/.patrol/history.json" ]; then
+  safety_entry=$(jq -r '.rules["_safety-no-force"] // empty' "$HOME/.patrol/history.json" 2>/dev/null)
+else
+  safety_entry=""
+fi
+assert_empty "tool-tracker skips safety rules for adaptive history" "$safety_entry"
+
+# Test: adaptive disabled skips recording in tool-tracker
+TTA_SID3="tt-adaptive3-$$"
+reset_config
+reset_state "$TTA_SID3"
+rm -f "$HOME/.patrol/history.json"
+TTA_STATE3="/tmp/patrol-${TTA_SID3}"
+echo '{"adaptive": false}' > "$HOME/.patrol/config.json"
+cat > "$TTA_STATE3/rules.json" <<'TTAEOF3'
+[{"id":"no-commit","name":"No commit","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"git commit"},"message":"Don't commit yet"}]
+TTAEOF3
+# Trigger the rule with adaptive disabled
+run_hook tool-tracker.sh "{\"session_id\":\"$TTA_SID3\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m test\"},\"cwd\":\"$PATROL_CWD\"}"
+# Verify no history entry
+if [ -f "$HOME/.patrol/history.json" ]; then
+  disabled_entry=$(jq -r '.rules["no-commit"] // empty' "$HOME/.patrol/history.json" 2>/dev/null)
+else
+  disabled_entry=""
+fi
+assert_empty "adaptive disabled skips recording in tool-tracker" "$disabled_entry"
+
+# Clean up
+rm -f "$HOME/.patrol/history.json"
+
+
+# ══════════════════════════════════════════════════════════════
 # Summary
 # ══════════════════════════════════════════════════════════════
 printf "\n══════════════════════════════════════════\n"

@@ -111,6 +111,15 @@ while IFS= read -r rule; do
       echo "$rule" | jq -c --arg tool "$TOOL_NAME" --arg file "$FILE_PATH" \
         '{rule_id: .id, level: .level, message: .message, tool: $tool, file: $file, timestamp: now}' \
         >> "$STATE_DIR/violations.jsonl"
+
+      # Record in adaptive history (if enabled)
+      ADAPTIVE_ENABLED=$(patrol_config "adaptive" "true")
+      if [ "$ADAPTIVE_ENABLED" = "true" ]; then
+        case "$rule_id" in _safety-*) ;; *)
+          patrol_adaptive_record_violation "$rule_id"
+          ;;
+        esac
+      fi
     fi
   fi
 done < <(jq -c '.[]' "$RULES_CACHE" 2>/dev/null)
