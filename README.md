@@ -6,13 +6,13 @@
   **ESLint for Claude Code.** Rules. Workflows. Safety. One install.
 
   [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-  [![Version](https://img.shields.io/badge/version-3.0.0--alpha.1-green.svg)]()
+  [![Version](https://img.shields.io/badge/version-3.0.0-green.svg)]()
   [![Shell](https://img.shields.io/badge/pure%20shell-zero%20deps-orange.svg)]()
 </div>
 
 ---
 
-Patrol is a **policy engine for Claude Code** — think ESLint, but for AI coding behavior. It enforces coding rules, prevents dangerous actions, and guides better workflows — all through lightweight shell hooks with zero token cost during normal coding.
+Patrol is a **policy engine for Claude Code** — think ESLint, but for AI coding behavior. It enforces coding rules, prevents dangerous actions, and guides better workflows — with adaptive enforcement that learns from your behavior.
 
 ```
 Three layers of protection:
@@ -137,6 +137,56 @@ Rules can require that something happened before the trigger fires a violation:
 | `warn` | Claude warns, shows what's wrong |
 | `block` | Claude refuses until requirement is met |
 
+## Adaptive Enforcement
+
+Patrol learns from your behavior. Every rule tracks a **violation score** — violations increase it, time decays it. When the score crosses a threshold, the enforcement level shifts.
+
+> Think of it like model training: violations are loss signals, the score is accumulated loss
+> with time decay, and thresholds determine when to adjust.
+
+### How It Works
+
+```
+Score = previous_score × 0.95^(days_since_last) + 1.0  (on violation)
+Score = previous_score × 0.95^(days_since_last)         (on load)
+
+Score > 5.0  → enforcement +1 level (stricter)
+Score < 0.5  → enforcement -1 level (milder)
+Otherwise    → stays at configured level
+```
+
+| Scenario | Score | Result |
+|----------|-------|--------|
+| 8 violations in 5 days | ~6.2 | warn → block |
+| 0 violations for 3 weeks | ~0.35 | warn → inform |
+| 1 violation after 2 weeks silence | ~1.0 | stays at anchor |
+
+### Boundaries
+
+- Default: **±1 level** from configured anchor
+- Safety rules (`_safety-*`): **always exempt**, never adapted
+- Per-rule override:
+
+```json
+{
+  "id": "test-before-push",
+  "level": "warn",
+  "adaptive": { "min": "inform", "max": "block" }
+}
+```
+
+### Notifications
+
+When a level changes, Patrol tells you once at session start:
+
+```
+Patrol: adaptive levels changed this session:
+  read-before-edit: warn → inform (no violations in 18 days)
+  test-before-push: warn → block (7 violations this week)
+```
+
+Check anytime with `/patrol-status`.
+
 ---
 
 ## Built-in Rules
@@ -244,6 +294,7 @@ Drop a file on each dev's machine (or add to dotfiles):
 - Juniors learn conventions in context, not from wiki pages
 - Safety rules can never be weakened — not by devs, not by config
 - Three enforcement levels let you choose the right friction per rule
+- Adaptive enforcement that learns each developer's patterns
 
 ---
 
@@ -276,6 +327,10 @@ Drop a file on each dev's machine (or add to dotfiles):
 | `easter_eggs` | `false` | Yoda-themed messages |
 | `disabled_hooks` | `[]` | Hooks to disable: `tool-tracker`, `prompt-monitor`, `session-start` |
 | `debug` | `false` | Log to `~/.patrol/debug.log` |
+| `adaptive` | `true` | Enable adaptive enforcement |
+| `adaptive_decay` | `0.95` | Daily decay factor (score halves in ~14 days) |
+| `adaptive_escalate_threshold` | `5.0` | Score above this → stricter |
+| `adaptive_deescalate_threshold` | `0.5` | Score below this → milder |
 
 ### Rule file locations
 
@@ -404,12 +459,6 @@ Workflow skills (`/trace-fix`, `/build-guard`, `/review-gate`) are now built int
 Yes. They complement each other — Remembrall manages context lifecycle, Patrol enforces development discipline. Both use separate state directories and hooks with no conflicts.
 
 </details>
-
-## Roadmap: v4 — Adaptive Rules
-
-Rules that learn from your behavior. If you haven't triggered `read-before-edit` in three weeks, Patrol drops it from `warn` to `inform`. If a team keeps hitting `test-before-push`, it escalates to `block`. Enforcement levels that adapt based on violation history — automatic, per-developer, per-rule.
-
-Coming after v3.0 stabilizes.
 
 ## License
 
