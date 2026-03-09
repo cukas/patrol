@@ -456,6 +456,58 @@ echo '{"disabled_hooks": ["session-start"]}' > "$HOME/.patrol/config.json"
 result=$(run_hook session-start.sh "{\"session_id\":\"$SID\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}")
 assert_empty "exits silently when hook disabled" "$result"
 
+# Compact banner
+reset_config
+reset_state "$SID"
+result=$(run_hook session-start.sh "{\"session_id\":\"$SID\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}")
+assert_match "compact startup banner" "Patrol active" "$result"
+assert_no_match "no multi-line intro" "Detects bug-fix sessions" "$result"
+
+# Writes initial tier file
+reset_config
+reset_state "$SID"
+STATE_DIR="/tmp/patrol-${SID}"
+run_hook session-start.sh "{\"session_id\":\"$SID\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+assert_file_exists "writes initial tier state file" "$STATE_DIR/tier"
+tier=$(cat "$STATE_DIR/tier" 2>/dev/null)
+assert_eq "initial tier is light (always_on default true)" "light" "$tier"
+
+# always_on=false writes tier=off
+reset_config
+echo '{"always_on": false}' > "$HOME/.patrol/config.json"
+reset_state "$SID"
+STATE_DIR="/tmp/patrol-${SID}"
+run_hook session-start.sh "{\"session_id\":\"$SID\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+tier=$(cat "$STATE_DIR/tier" 2>/dev/null)
+assert_eq "always_on=false writes tier=off" "off" "$tier"
+
+# Status line injection
+reset_config
+reset_state "$SID"
+FAKE_HOME="$TMPDIR_ROOT/statusline-test-$$"
+mkdir -p "$FAKE_HOME/.claude" "$FAKE_HOME/.patrol"
+echo '{}' > "$FAKE_HOME/.patrol/config.json"
+echo '{"statusLine":{"type":"command","command":"echo test"}}' > "$FAKE_HOME/.claude/settings.json"
+HOME="$FAKE_HOME" run_hook session-start.sh "{\"session_id\":\"$SID\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+settings_content=$(cat "$FAKE_HOME/.claude/settings.json")
+assert_match "injects patrol snippet into settings.json" "patrol-state" "$settings_content"
+
+# Idempotent: second run doesn't double-inject
+HOME="$FAKE_HOME" run_hook session-start.sh "{\"session_id\":\"$SID\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+count=$(grep -o "patrol-state" "$FAKE_HOME/.claude/settings.json" | wc -l | tr -d ' ')
+assert_eq "idempotent: only one patrol-state marker" "1" "$count"
+
+# No injection on clear/compact (only startup)
+reset_config
+reset_state "$SID"
+FAKE_HOME2="$TMPDIR_ROOT/statusline-test2-$$"
+mkdir -p "$FAKE_HOME2/.claude" "$FAKE_HOME2/.patrol"
+echo '{}' > "$FAKE_HOME2/.patrol/config.json"
+echo '{"statusLine":{"type":"command","command":"echo test2"}}' > "$FAKE_HOME2/.claude/settings.json"
+HOME="$FAKE_HOME2" run_hook session-start.sh "{\"session_id\":\"$SID\",\"source\":\"clear\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+settings_content2=$(cat "$FAKE_HOME2/.claude/settings.json")
+assert_no_match "no injection on clear source" "patrol-state" "$settings_content2"
+
 
 # ══════════════════════════════════════════════════════════════
 # 3. tool-tracker.sh integration tests

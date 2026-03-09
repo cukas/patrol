@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SessionStart hook: reset patrol state and inject discipline intro
+# SessionStart hook: reset patrol state, inject status line, show compact banner
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
@@ -25,13 +25,26 @@ if [ -n "$SESSION_ID" ]; then
   rm -f "$STATE_DIR/reads" "$STATE_DIR/edits" "$STATE_DIR/verified" "$STATE_DIR/nudge-level" "$STATE_DIR/verify-nudged" 2>/dev/null
   echo "0" > "$STATE_DIR/nudge-level"
 
+  # Write initial tier based on always_on config
+  ALWAYS_ON=$(patrol_config "always_on" "true")
+  if [ "$ALWAYS_ON" = "true" ]; then
+    echo "light" > "$STATE_DIR/tier"
+  else
+    echo "off" > "$STATE_DIR/tier"
+  fi
+
   # Preserve manual mode across clear/compact, reset on fresh startup
   if [ "$SOURCE" = "startup" ]; then
     rm -f "$STATE_DIR/mode" 2>/dev/null
   fi
 fi
 
-INTRO="Patrol is active. It monitors your development discipline:\\n- Detects bug-fix sessions automatically (or use /patrol-on)\\n- Warns if you edit files without reading them first\\n- Warns if you apply successive patches without investigating\\n- Reminds you to run build/test after making changes\\nUse /patrol-help for commands. Zero token cost when you're working properly."
+# Auto-inject status line on startup (not on clear/compact)
+if [ "$SOURCE" = "startup" ]; then
+  _patrol_ensure_statusline
+fi
+
+INTRO="🛡️ Patrol active · /patrol-help for commands"
 
 cat <<EOF
 {

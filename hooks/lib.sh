@@ -243,3 +243,50 @@ patrol_yoda_message() {
     *)       echo "$normal_msg" ;;
   esac
 }
+
+# ─── Status line auto-injection ───────────────────────────────
+# Appends Patrol's adaptive display snippet to settings.json statusLine.command
+# Guard: checks for "patrol-state" marker to avoid double-injection
+_patrol_ensure_statusline() {
+  local settings_file="$HOME/.claude/settings.json"
+  mkdir -p "$HOME/.claude" 2>/dev/null
+  [ -f "$settings_file" ] || echo '{}' > "$settings_file"
+
+  # Already injected? Skip.
+  if grep -q "patrol-state" "$settings_file" 2>/dev/null; then
+    return 0
+  fi
+
+  # Backup before mutation
+  cp "$settings_file" "${settings_file}.patrol-backup" 2>/dev/null || true
+
+  local has_statusline
+  has_statusline=$(jq -r '.statusLine.command // empty' "$settings_file" 2>/dev/null)
+
+  # Build the Patrol status line snippet
+  local patrol_snippet
+  patrol_snippet='PATROL_DIR="/tmp/patrol-${session_id}"; if [ -d "$PATROL_DIR" ]; then p_tier=$(cat "$PATROL_DIR/tier" 2>/dev/null); p_mode=$(cat "$PATROL_DIR/mode" 2>/dev/null); p_nudge=$(cat "$PATROL_DIR/nudge-level" 2>/dev/null | tr -d "[:space:]"); p_edits=0; p_reads=0; p_unread=0; [ -f "$PATROL_DIR/edits" ] && p_edits=$(wc -l < "$PATROL_DIR/edits" | tr -d " "); [ -f "$PATROL_DIR/reads" ] && p_reads=$(wc -l < "$PATROL_DIR/reads" | tr -d " "); if [ "$p_edits" -gt 0 ] && [ -f "$PATROL_DIR/edits" ]; then if [ -f "$PATROL_DIR/reads" ]; then p_unread=$(comm -23 <(sort -u "$PATROL_DIR/edits") <(sort -u "$PATROL_DIR/reads") | wc -l | tr -d " "); else p_unread=$p_edits; fi; fi; p_verified=false; [ -f "$PATROL_DIR/verified" ] && p_verified=true; p_easter=$(jq -r ".easter_eggs // false" "$HOME/.patrol/config.json" 2>/dev/null); p_display=""; if [ "$p_mode" != "off" ]; then if [ "${p_nudge:-0}" -ge 3 ] 2>/dev/null; then if [ "$p_easter" = "true" ]; then p_display="$(printf '"'"'\033[31m'"'"')🚨 investigate you must$(printf '"'"'\033[0m'"'"')"; else p_display="$(printf '"'"'\033[31m'"'"')🚨 STOP$(printf '"'"'\033[0m'"'"')"; fi; elif [ "${p_nudge:-0}" -ge 2 ] 2>/dev/null; then if [ "$p_easter" = "true" ]; then p_display="$(printf '"'"'\033[33m'"'"')🟡 band-aid this is$(printf '"'"'\033[0m'"'"')"; else p_display="$(printf '"'"'\033[33m'"'"')🟡 ${p_edits} patches$(printf '"'"'\033[0m'"'"')"; fi; elif [ "$p_unread" -ge 1 ] 2>/dev/null; then if [ "$p_easter" = "true" ]; then p_display="$(printf '"'"'\033[33m'"'"')🛡️ ${p_unread} unread, hmm$(printf '"'"'\033[0m'"'"')"; else p_display="$(printf '"'"'\033[33m'"'"')🛡️ ${p_unread} unread$(printf '"'"'\033[0m'"'"')"; fi; elif [ "$p_edits" -gt 0 ] || [ "$p_reads" -gt 0 ]; then if [ "$p_tier" = "full" ]; then p_display="$(printf '"'"'\033[32m'"'"')🛡️ bugfix · 📖${p_reads} ✏️${p_edits}$(printf '"'"'\033[0m'"'"')"; else p_display="$(printf '"'"'\033[32m'"'"')🛡️ 📖${p_reads} ✏️${p_edits}$(printf '"'"'\033[0m'"'"')"; fi; else if [ "$p_tier" != "off" ]; then p_display="🛡️"; fi; fi; if [ "$p_verified" = true ] && [ -n "$p_display" ]; then p_display="${p_display} ✅"; fi; fi; if [ -n "$p_display" ]; then status="$status | $p_display"; fi; fi; # patrol-state'
+
+  if [ -z "$has_statusline" ]; then
+    patrol_debug "WARNING: no statusLine.command found — skipping injection"
+    echo "Patrol: no status line found in settings.json — status line indicator requires an existing status line" >&2
+    return 0
+  fi
+
+  # Append snippet to existing command
+  local new_command
+  new_command=$(jq -r '.statusLine.command' "$settings_file" 2>/dev/null)
+  new_command="${new_command}; ${patrol_snippet}"
+
+  # Write back atomically
+  local tmp
+  tmp=$(mktemp "${settings_file}.XXXXXX")
+  if jq --arg cmd "$new_command" '.statusLine.command = $cmd' "$settings_file" > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+    mv "$tmp" "$settings_file"
+    patrol_debug "status line auto-configured in settings.json"
+    echo "Patrol: status line configured in settings.json" >&2
+  else
+    rm -f "$tmp"
+    patrol_debug "ERROR: failed to write settings.json"
+  fi
+}
