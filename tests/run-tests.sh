@@ -1209,6 +1209,75 @@ result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$ENF_SID\",\"cwd\":\"$PAT
 assert_match "v2 investigation gate still works when no violations" "edited without being read" "$result"
 
 
+# ── Easter egg messages ──────────────────────────────────────
+printf "\n  Easter egg messages:\n"
+
+EE_SID="easter-$$"
+
+# Test: easter eggs OFF — nudge shows normal message
+reset_config
+echo '{"easter_eggs": false}' > "$HOME/.patrol/config.json"
+reset_state "$EE_SID"
+EE_STATE="/tmp/patrol-${EE_SID}"
+echo "0" > "$EE_STATE/nudge-level"
+echo "/src/a.ts" > "$EE_STATE/edits"
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$EE_SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"fix the bug\"}")
+assert_match "easter_eggs off: normal nudge message" "edited without being read" "$result"
+assert_no_match "easter_eggs off: no yoda in nudge" "hmm" "$result"
+
+# Test: easter eggs ON — nudge shows yoda message
+reset_config
+echo '{"easter_eggs": true}' > "$HOME/.patrol/config.json"
+reset_state "$EE_SID"
+EE_STATE="/tmp/patrol-${EE_SID}"
+echo "0" > "$EE_STATE/nudge-level"
+echo "/src/a.ts" > "$EE_STATE/edits"
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$EE_SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"fix the bug\"}")
+assert_match "easter_eggs on: yoda nudge with hmm" "hmm" "$result"
+
+# Test: easter eggs ON — level 2 shows yoda warning
+reset_config
+echo '{"easter_eggs": true}' > "$HOME/.patrol/config.json"
+reset_state "$EE_SID"
+EE_STATE="/tmp/patrol-${EE_SID}"
+echo "1" > "$EE_STATE/nudge-level"
+printf '/src/a.ts\n/src/b.ts\n/src/c.ts\n' > "$EE_STATE/edits"
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$EE_SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"fix the bug\"}")
+assert_match "easter_eggs on: yoda warning" "band-aid this is" "$result"
+
+# Test: easter eggs ON — level 3 shows yoda stop
+reset_config
+echo '{"easter_eggs": true}' > "$HOME/.patrol/config.json"
+reset_state "$EE_SID"
+EE_STATE="/tmp/patrol-${EE_SID}"
+echo "2" > "$EE_STATE/nudge-level"
+printf '/src/a.ts\n/src/b.ts\n/src/c.ts\n/src/d.ts\n' > "$EE_STATE/edits"
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$EE_SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"fix the bug\"}")
+assert_match "easter_eggs on: yoda stop" "investigate you must" "$result"
+
+# Test: easter eggs ON — block violation shows yoda header
+reset_config
+echo '{"easter_eggs": true}' > "$HOME/.patrol/config.json"
+reset_state "$EE_SID"
+EE_STATE="/tmp/patrol-${EE_SID}"
+echo '{"rule_id":"r1","level":"block","message":"Cannot force push","timestamp":1}' > "$EE_STATE/violations.jsonl"
+echo "0" > "$EE_STATE/nudge-level"
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$EE_SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"push it\"}")
+assert_match "easter_eggs on: yoda block header" "Proceed you shall not" "$result"
+assert_match "easter_eggs on: block still shows rule message" "Cannot force push" "$result"
+
+# Test: easter eggs ON — warn violation shows yoda header
+reset_config
+echo '{"easter_eggs": true}' > "$HOME/.patrol/config.json"
+reset_state "$EE_SID"
+EE_STATE="/tmp/patrol-${EE_SID}"
+echo '{"rule_id":"r1","level":"warn","message":"Run tests first","timestamp":1}' > "$EE_STATE/violations.jsonl"
+echo "0" > "$EE_STATE/nudge-level"
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$EE_SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"push\"}")
+assert_match "easter_eggs on: yoda warn header" "disturbance in the Force" "$result"
+assert_match "easter_eggs on: warn still shows rule message" "Run tests first" "$result"
+
+
 # ── Session start rule loading ───────────────────────────────
 printf "\n  Session start rule loading:\n"
 

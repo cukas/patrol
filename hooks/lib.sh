@@ -240,6 +240,8 @@ patrol_yoda_message() {
     warning) echo "band-aid this is" ;;
     stop)    echo "investigate you must" ;;
     verify)  echo "verify your work, you should" ;;
+    block)   echo "Proceed you shall not." ;;
+    warn)    echo "A disturbance in the Force, I sense." ;;
     *)       echo "$normal_msg" ;;
   esac
 }

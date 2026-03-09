@@ -137,10 +137,12 @@ if [ -f "$VIOLATIONS_FILE" ] && [ -s "$VIOLATIONS_FILE" ]; then
   # Build output message (block first, then warn, then inform)
   OUTPUT_MSG=""
   if [ -n "$BLOCK_MSGS" ]; then
-    OUTPUT_MSG="$(printf '🚨 PATROL BLOCKED:\n%s' "$BLOCK_MSGS")"
+    BLOCK_HEADER=$(patrol_yoda_message "block" "PATROL BLOCKED:")
+    OUTPUT_MSG="$(printf '🚨 %s\n%s' "$BLOCK_HEADER" "$BLOCK_MSGS")"
   fi
   if [ -n "$WARN_MSGS" ]; then
-    OUTPUT_MSG="$(printf '%s🟡 PATROL WARNING:\n%s' "$OUTPUT_MSG" "$WARN_MSGS")"
+    WARN_HEADER=$(patrol_yoda_message "warn" "PATROL WARNING:")
+    OUTPUT_MSG="$(printf '%s🟡 %s\n%s' "$OUTPUT_MSG" "$WARN_HEADER" "$WARN_MSGS")"
   fi
   if [ -n "$INFORM_MSGS" ]; then
     OUTPUT_MSG="${OUTPUT_MSG}${INFORM_MSGS}"
@@ -185,12 +187,15 @@ if [ "$TIER" = "full" ] || [ "$TIER" = "light" ]; then
     case "$NEW_LEVEL" in
       1)
         MSG="🔵 Patrol: ${UNREAD_EDIT_COUNT} file(s) edited without being read first. Consider reading the relevant code before patching."
+        MSG=$(patrol_yoda_message "nudge" "$MSG")
         ;;
       2)
         MSG="🟡 Patrol: ${EDIT_COUNT} consecutive patches with only ${READ_COUNT} files read. You may be band-aiding. Step back and trace the actual code path before trying another fix."
+        MSG=$(patrol_yoda_message "warning" "$MSG")
         ;;
       3)
         MSG="🚨 PATROL: STOP. You've applied ${EDIT_COUNT} patches without proper investigation. Read the files. Trace the root cause. Use /diagnose for a structured investigation protocol. Do NOT apply another patch until you understand the problem."
+        MSG=$(patrol_yoda_message "stop" "$MSG")
         ;;
     esac
 
@@ -236,6 +241,7 @@ if [ "$EDIT_COUNT" -gt 0 ]; then
         else
           MSG="🔧 Patrol: ${EDIT_COUNT} files changed, no build/test run yet."
         fi
+        MSG=$(patrol_yoda_message "verify" "$MSG")
 
         ESCAPED_MSG=$(patrol_escape_json "$MSG")
         cat <<EOF
