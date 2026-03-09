@@ -11,10 +11,11 @@ Show the user this reference:
 
 | Command | Description |
 |---------|-------------|
-| `/patrol-on` | Force patrol mode on for this session |
+| `/patrol-on` | Force full patrol mode on for this session |
 | `/patrol-off` | Disable patrol mode for this session |
-| `/patrol-status` | Diagnostic — show mode, tracking state, config |
-| `/patrol-config` | Show/edit config |
+| `/patrol-status` | Dashboard — mode, tier, health, verification, config |
+| `/patrol-keywords` | Manage custom trigger keywords (list/add/remove/reset) |
+| `/patrol-config` | Show/edit configuration |
 | `/patrol-help` | This help |
 
 ## Skills
@@ -26,25 +27,32 @@ Show the user this reference:
 ## How It Works
 
 ```
-Normal coding                    → silent (zero tokens)
-Bug-fix detected (auto/manual)   → investigation gate active
-  Edit without Read              → nudge
-  3+ edits without investigation → warning
-  4+ consecutive patches         → STOP
-Files changed, no build/test     → reminder
+Two-tier enforcement:
+
+  Light mode (always-on)           → read-before-edit nudge + build/test reminder
+  Full mode (bugfix keyword/manual) → full escalation + band-aid detection + STOP gate
+
+  Status line (real-time):
+    🛡️                              → watching, no activity
+    🛡️ 📖4 ✏️2                      → healthy: 4 files read, 2 edited
+    🛡️ bugfix · 📖4 ✏️2             → bugfix mode, healthy
+    🟡 2 unread                     → warning: edits without reads
+    🚨 STOP                         → hard stop: investigate now
+    ✅                              → build/test verified
 ```
 
 ## Config
 
 **Global:** `~/.patrol/config.json`
 **Per-project:** `.patrol/config.json` (overrides global)
-**Auto-detect:** Package manager (pnpm > yarn > npm), project type (Cargo, pytest, go, make)
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `enabled` | `true` | Enable/disable patrol |
-| `auto_detect_bugfix` | `true` | Auto-detect bug-fix sessions |
-| `keywords` | `["fix","bug",...]` | Trigger keywords |
-| `band_aid_threshold` | `3` | Edits before warning |
-| `verify_commands` | `"auto"` | Build/test commands |
-| `debug` | `false` | Debug logging |
+| `always_on` | `true` | Light mode active even without bugfix keywords |
+| `auto_detect_bugfix` | `true` | Auto-detect bug-fix sessions from keywords |
+| `custom_keywords` | `[]` | Additional trigger keywords (extend defaults) |
+| `band_aid_threshold` | `3` | Edits before warning in full mode |
+| `verify_commands` | `"auto"` | Build/test commands (or auto-detect) |
+| `easter_eggs` | `false` | Yoda-themed messages |
+| `debug` | `false` | Debug logging to ~/.patrol/debug.log |
