@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="docs/patrol-hero.png" alt="Patrol" width="600">
+</div>
+
 # Patrol
 
 *"Investigate, you must. Band-aid, you must not."*
@@ -14,12 +18,24 @@ claude plugin install patrol@cukas
 That's it. Zero setup. Patrol monitors Claude's development discipline automatically.
 
 ```
-Normal coding                    → silent (zero tokens)
-Bug-fix detected (auto/manual)   → investigation gate active
-  Edit without Read              → 🔵 Patrol: 1 file edited without being read first
-  3+ patches without reading     → 🟡 Patrol: 3 consecutive patches. Step back and trace the code path.
-  4+ patches, no investigation   → 🚨 PATROL: STOP. Read the files. Trace the root cause. NOW.
-Files changed, no build/test     → 🔧 Patrol: 5 files changed, no build/test run yet.
+Two-tier enforcement:
+
+  Light mode (always-on default)     → read-before-edit nudge + build/test reminder
+  Full mode (bugfix keyword/manual)  → full escalation + band-aid detection + STOP gate
+
+Status line (real-time):
+  🛡️                              → watching, no activity
+  🛡️ 📖4 ✏️2                      → healthy: 4 files read, 2 edited
+  🛡️ bugfix · 📖4 ✏️2             → bugfix mode, healthy
+  🟡 2 unread                     → warning: edits without reads
+  🚨 STOP                         → hard stop: investigate now
+  ✅                              → build/test verified
+
+Escalation (full mode only):
+  Edit without Read              → 🔵 nudge
+  3+ patches without reading     → 🟡 warning
+  4+ patches, no investigation   → 🚨 STOP
+  Files changed, no build/test   → 🔧 reminder
 ```
 
 ---
@@ -114,6 +130,9 @@ Patrol uses two config layers — global and per-project:
 | `verify_commands` | `"auto"` | Build/test commands to detect, or `"auto"` to auto-detect from project files |
 | `escalation` | `"siren"` | Escalation style |
 | `disabled_hooks` | `[]` | Hooks to disable by name (e.g., `["tool-tracker"]`) |
+| `always_on` | `true` | Light mode enforcement even without bugfix keywords |
+| `custom_keywords` | `[]` | Additional trigger keywords (extend defaults) |
+| `easter_eggs` | `false` | Yoda-themed escalation messages |
 | `debug` | `false` | Enable debug logging to `~/.patrol/debug.log` |
 
 Settings apply globally — once configured, all Claude sessions respect them. Per-project config takes priority for any key it defines.
@@ -126,6 +145,7 @@ Settings apply globally — once configured, all Claude sessions respect them. P
 | `/patrol-off` | Disable patrol mode for this session (auto-detection still applies unless disabled in config) |
 | `/patrol-status` | Diagnostic — show mode, tracked reads/edits, nudge level, verification status, config |
 | `/patrol-config` | Show/edit configuration — lists all settings with current values |
+| `/patrol-keywords` | Manage custom trigger keywords — list, add, remove, reset |
 | `/patrol-help` | Quick reference for all commands, skills, escalation levels, and config options |
 
 ## Skills
@@ -192,7 +212,8 @@ Escalation only increases — once you hit warning level, a nudge won't fire aga
 | Normal coding (no bug-fix keywords) | **0 tokens** — tool-tracker runs async and silent, prompt-monitor exits without output |
 | Bug-fix mode, Claude investigates properly | **0 tokens** — reads before edits, no warnings triggered |
 | Bug-fix mode, Claude skips investigation | ~30-50 tokens per warning (fires once per level) |
-| Session start | ~50 tokens for the intro message |
+| Status line | **0 tokens** — runs in shell outside Claude's context, reads state files only |
+| Session start | ~15 tokens for the compact intro message |
 | Build/test reminder | ~20 tokens (fires once per edit batch) |
 
 ## State Files
@@ -207,6 +228,7 @@ Patrol stores per-session state in `/tmp/patrol-{session_id}/`:
   nudge-level # current escalation level (0-3)
   verify-nudged # edit count at last verify reminder
   mode        # manual mode override ("on" or "off")
+  tier        # current enforcement tier ("light", "full", or "off")
 ```
 
 State is reset on session start. Manual mode is preserved across `/clear` and `/compact` but reset on fresh `startup`.
@@ -270,7 +292,7 @@ Logs are written to `~/.patrol/debug.log` with ISO timestamps and hook names. Th
 }
 ```
 
-**Does Patrol work alongside Remembrall?** Yes. They complement each other — Remembrall manages context lifecycle, Patrol enforces investigation discipline. They use separate state directories and hooks with no conflicts.
+**Does Patrol work alongside Remembrall?** Yes. They complement each other — Remembrall manages context lifecycle, Patrol enforces investigation discipline. Both display in the status line: Remembrall shows context gauge, Patrol shows discipline indicator. They use separate state directories and hooks with no conflicts.
 
 **Can I use Patrol in CI or automated pipelines?** Patrol is designed for interactive Claude Code sessions. In CI, there's no user prompt to trigger keyword detection. You could force it on with `/patrol-on`, but the primary value is in interactive development.
 
