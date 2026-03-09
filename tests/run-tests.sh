@@ -578,6 +578,7 @@ assert_match "\"fix the bug\" triggers bug-fix mode" "Patrol" "$result"
 
 # "I want to install Firefox" does NOT trigger (word boundary)
 reset_config
+echo '{"always_on": false}' > "$HOME/.patrol/config.json"
 reset_state "$SID"
 STATE_DIR="/tmp/patrol-${SID}"
 echo "0" > "$STATE_DIR/nudge-level"
@@ -588,6 +589,7 @@ assert_no_match "\"install Firefox\" does NOT trigger (word boundary)" "Patrol.*
 
 # "prefix the thing" does NOT trigger
 reset_config
+echo '{"always_on": false}' > "$HOME/.patrol/config.json"
 reset_state "$SID"
 STATE_DIR="/tmp/patrol-${SID}"
 echo "0" > "$STATE_DIR/nudge-level"
@@ -633,7 +635,7 @@ assert_match "French keyword \"erreur\" triggers" "Patrol" "$result"
 
 # Custom keywords from config
 reset_config
-echo '{"keywords": ["regression"]}' > "$HOME/.patrol/config.json"
+echo '{"custom_keywords": ["regression"]}' > "$HOME/.patrol/config.json"
 reset_state "$SID"
 STATE_DIR="/tmp/patrol-${SID}"
 echo "0" > "$STATE_DIR/nudge-level"
@@ -704,7 +706,7 @@ printf "\n  Verify check:\n"
 
 # No output when edits < 3
 reset_config
-echo '{"auto_detect_bugfix": false}' > "$HOME/.patrol/config.json"
+echo '{"auto_detect_bugfix": false, "always_on": false}' > "$HOME/.patrol/config.json"
 reset_state "$SID"
 STATE_DIR="/tmp/patrol-${SID}"
 echo "0" > "$STATE_DIR/nudge-level"
@@ -780,6 +782,64 @@ echo "0" > "$STATE_DIR/nudge-level"
 echo "/src/a.ts" > "$STATE_DIR/edits"
 result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"this is broken\"}")
 assert_match "auto-detect activates on keywords" "Patrol" "$result"
+
+
+# ── Two-tier enforcement ────────────────────────────────────
+printf "\n  Two-tier enforcement:\n"
+
+# Light mode: always_on=true, no keywords → nudge fires but no escalation past level 1
+reset_config
+echo '{"always_on": true}' > "$HOME/.patrol/config.json"
+reset_state "$SID"
+STATE_DIR="/tmp/patrol-${SID}"
+echo "0" > "$STATE_DIR/nudge-level"
+echo "/src/a.ts" > "$STATE_DIR/edits"
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"add a new feature\"}")
+assert_match "light mode: nudge fires on unread edit" "edited without being read" "$result"
+tier=$(cat "$STATE_DIR/tier" 2>/dev/null)
+assert_eq "light mode: tier file written as light" "light" "$tier"
+
+# Light mode: 4+ unread edits → stays at nudge, no STOP
+reset_config
+echo '{"always_on": true}' > "$HOME/.patrol/config.json"
+reset_state "$SID"
+STATE_DIR="/tmp/patrol-${SID}"
+echo "0" > "$STATE_DIR/nudge-level"
+printf "/src/a.ts\n/src/b.ts\n/src/c.ts\n/src/d.ts\n" > "$STATE_DIR/edits"
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"add a new feature\"}")
+assert_no_match "light mode: no STOP even with 4+ unread edits" "STOP" "$result"
+
+# Full mode via keyword: STOP fires at 4+
+reset_config
+echo '{"always_on": true}' > "$HOME/.patrol/config.json"
+reset_state "$SID"
+STATE_DIR="/tmp/patrol-${SID}"
+echo "0" > "$STATE_DIR/nudge-level"
+printf "/src/a.ts\n/src/b.ts\n/src/c.ts\n/src/d.ts\n" > "$STATE_DIR/edits"
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"fix the crash\"}")
+assert_match "full mode: STOP fires at 4+ unread edits" "STOP" "$result"
+tier=$(cat "$STATE_DIR/tier" 2>/dev/null)
+assert_eq "full mode: tier file written as full" "full" "$tier"
+
+# always_on=false: no keywords, no manual mode → silent (v1.1.0 behavior)
+reset_config
+echo '{"always_on": false}' > "$HOME/.patrol/config.json"
+reset_state "$SID"
+STATE_DIR="/tmp/patrol-${SID}"
+echo "0" > "$STATE_DIR/nudge-level"
+echo "/src/a.ts" > "$STATE_DIR/edits"
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"add a new feature\"}")
+assert_empty "always_on=false: silent without keywords" "$result"
+
+# Custom keywords via custom_keywords config
+reset_config
+echo '{"custom_keywords": ["regression"]}' > "$HOME/.patrol/config.json"
+reset_state "$SID"
+STATE_DIR="/tmp/patrol-${SID}"
+echo "0" > "$STATE_DIR/nudge-level"
+echo "/src/a.ts" > "$STATE_DIR/edits"
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"there is a regression\"}")
+assert_match "custom_keywords triggers full mode" "Patrol" "$result"
 
 
 # ══════════════════════════════════════════════════════════════

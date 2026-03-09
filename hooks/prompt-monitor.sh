@@ -23,32 +23,33 @@ ENABLED=$(patrol_config "enabled" "true")
 
 STATE_DIR=$(patrol_state_dir "$SESSION_ID")
 
-# ─── Determine patrol mode ──────────────────────────────────
+# ─── Determine patrol mode and tier ──────────────────────────
 MODE="off"
+TIER="off"
 MANUAL_MODE=""
 [ -f "$STATE_DIR/mode" ] && MANUAL_MODE=$(cat "$STATE_DIR/mode" 2>/dev/null)
 
 if [ "$MANUAL_MODE" = "on" ]; then
   MODE="on"
+  TIER="full"
 elif [ "$MANUAL_MODE" = "off" ]; then
   MODE="off"
+  TIER="off"
 else
+  # Check for keyword-triggered full mode
   AUTO_DETECT=$(patrol_config "auto_detect_bugfix" "true")
   if [ "$AUTO_DETECT" = "true" ] && [ -n "$USER_MESSAGE" ]; then
-    KEYWORDS=$(patrol_config "keywords" '["fix","bug","broken","error","crash","doesn'\''t work","not working","Fehler","kaputt","Absturz","funktioniert nicht","erreur","plantage","cassé","ne marche pas"]')
+    KEYWORDS=$(patrol_merged_keywords)
     MSG_LOWER=$(echo "$USER_MESSAGE" | tr '[:upper:]' '[:lower:]')
     KEYWORD_MATCH=""
     while read -r kw; do
       kw_lower=$(echo "$kw" | tr '[:upper:]' '[:lower:]')
-      # Use word boundary matching for single words, fixed-string for phrases
       if echo "$kw_lower" | grep -q ' '; then
-        # Multi-word phrase: fixed-string match (e.g., "doesn't work")
         if echo "$MSG_LOWER" | grep -qF "$kw_lower"; then
           KEYWORD_MATCH="1"
           break
         fi
       else
-        # Single word: word boundary match (prevents "fix" matching "prefix")
         if echo "$MSG_LOWER" | grep -qwF "$kw_lower"; then
           KEYWORD_MATCH="1"
           break
@@ -57,12 +58,25 @@ else
     done < <(echo "$KEYWORDS" | jq -r '.[]' 2>/dev/null)
     if [ "$KEYWORD_MATCH" = "1" ]; then
       MODE="auto"
+      TIER="full"
       patrol_debug "bug-fix mode auto-activated by keyword match"
+    fi
+  fi
+
+  # If no keyword match, check always_on for light mode
+  if [ "$TIER" = "off" ]; then
+    ALWAYS_ON=$(patrol_config "always_on" "true")
+    if [ "$ALWAYS_ON" = "true" ]; then
+      MODE="light"
+      TIER="light"
     fi
   fi
 fi
 
-patrol_debug "mode=$MODE manual=$MANUAL_MODE"
+# Write tier to state file (for status line to read)
+echo "$TIER" > "$STATE_DIR/tier"
+
+patrol_debug "mode=$MODE tier=$TIER manual=$MANUAL_MODE"
 
 # ─── Read state ──────────────────────────────────────────────
 EDIT_COUNT=0
@@ -88,17 +102,25 @@ fi
 
 patrol_debug "edits=$EDIT_COUNT reads=$READ_COUNT unread_edits=$UNREAD_EDIT_COUNT nudge=$NUDGE_LEVEL"
 
-# ─── Check 1: Investigation gate (bug-fix mode) ─────────────
-if [ "$MODE" = "on" ] || [ "$MODE" = "auto" ]; then
+# ─── Check 1: Investigation gate ─────────────────────────────
+if [ "$TIER" = "full" ] || [ "$TIER" = "light" ]; then
   THRESHOLD=$(patrol_config "band_aid_threshold" "3")
   NEW_LEVEL=0
 
-  if [ "$UNREAD_EDIT_COUNT" -ge 4 ] || [ "$EDIT_COUNT" -ge "$((THRESHOLD + 1))" ]; then
-    NEW_LEVEL=3
-  elif [ "$UNREAD_EDIT_COUNT" -ge 3 ] || [ "$EDIT_COUNT" -ge "$THRESHOLD" ]; then
-    NEW_LEVEL=2
-  elif [ "$UNREAD_EDIT_COUNT" -ge 1 ]; then
-    NEW_LEVEL=1
+  if [ "$TIER" = "full" ]; then
+    # Full escalation
+    if [ "$UNREAD_EDIT_COUNT" -ge 4 ] || [ "$EDIT_COUNT" -ge "$((THRESHOLD + 1))" ]; then
+      NEW_LEVEL=3
+    elif [ "$UNREAD_EDIT_COUNT" -ge 3 ] || [ "$EDIT_COUNT" -ge "$THRESHOLD" ]; then
+      NEW_LEVEL=2
+    elif [ "$UNREAD_EDIT_COUNT" -ge 1 ]; then
+      NEW_LEVEL=1
+    fi
+  else
+    # Light mode: nudge only, cap at level 1
+    if [ "$UNREAD_EDIT_COUNT" -ge 1 ]; then
+      NEW_LEVEL=1
+    fi
   fi
 
   if [ "$NEW_LEVEL" -gt "$NUDGE_LEVEL" ]; then
@@ -130,7 +152,7 @@ fi
 
 # ─── Check 2: Build/test verification ───────────────────────
 # Skip verify check when patrol is explicitly off
-if [ "$MANUAL_MODE" = "off" ]; then
+if [ "$MANUAL_MODE" = "off" ] || [ "$TIER" = "off" ]; then
   exit 0
 fi
 if [ "$EDIT_COUNT" -gt 0 ]; then
