@@ -36,6 +36,34 @@ if [ -n "$SESSION_ID" ]; then
 
   # V3: Load and cache merged rules
   RULES=$(patrol_load_all_rules 2>/dev/null) || RULES="[]"
+
+  # Adaptive level adjustment
+  ADAPTIVE_ENABLED=$(patrol_config "adaptive" "true")
+  ADAPTIVE_CHANGES=""
+  if [ "$ADAPTIVE_ENABLED" = "true" ]; then
+    local_rules="$RULES"
+    while IFS= read -r rule; do
+      [ -z "$rule" ] && continue
+      rule_id=$(echo "$rule" | jq -r '.id')
+      # Skip safety rules — never adjust them
+      case "$rule_id" in _safety-*) continue ;; esac
+
+      configured_level=$(echo "$rule" | jq -r '.level')
+      adaptive_min=$(echo "$rule" | jq -r '.adaptive.min // empty')
+      adaptive_max=$(echo "$rule" | jq -r '.adaptive.max // empty')
+
+      adjusted_level=$(patrol_adaptive_level_with_bounds "$rule_id" "$configured_level" "$adaptive_min" "$adaptive_max")
+
+      if [ "$adjusted_level" != "$configured_level" ]; then
+        local_rules=$(echo "$local_rules" | jq --arg rid "$rule_id" --arg lvl "$adjusted_level" \
+          '[.[] | if .id == $rid then .level = $lvl else . end]')
+        ADAPTIVE_CHANGES="${ADAPTIVE_CHANGES}  ${rule_id}: ${configured_level} → ${adjusted_level}\n"
+        patrol_debug "adaptive: $rule_id level $configured_level → $adjusted_level"
+      fi
+    done < <(echo "$RULES" | jq -c '.[]')
+    RULES="$local_rules"
+  fi
+
   echo "$RULES" > "$STATE_DIR/rules.json"
   RULE_COUNT=$(echo "$RULES" | jq 'length' 2>/dev/null || echo "0")
   patrol_debug "loaded $RULE_COUNT rules to cache"
@@ -55,9 +83,27 @@ if [ "$SOURCE" = "startup" ]; then
 fi
 
 if [ "$RULE_COUNT" -gt 0 ] 2>/dev/null; then
-  INTRO="🛡️ Patrol active · ${RULE_COUNT} rules loaded · /patrol-help for commands"
+  if [ "${ADAPTIVE_ENABLED:-false}" = "true" ]; then
+    INTRO="🛡️ Patrol active · ${RULE_COUNT} rules loaded · adaptive enabled · /patrol-help for commands"
+  else
+    INTRO="🛡️ Patrol active · ${RULE_COUNT} rules loaded · /patrol-help for commands"
+  fi
 else
   INTRO="🛡️ Patrol active · /patrol-help for commands"
+fi
+
+# Append adaptive level changes to banner
+if [ -n "${ADAPTIVE_CHANGES:-}" ]; then
+  INTRO="${INTRO}\\nPatrol: adaptive levels changed:\\n${ADAPTIVE_CHANGES%\\n}"
+fi
+
+# First-time adaptive introduction (only on startup, once per install)
+if [ "${ADAPTIVE_ENABLED:-false}" = "true" ] && [ "${SOURCE:-}" = "startup" ]; then
+  if [ ! -f "$HOME/.patrol/.adaptive-introduced" ]; then
+    INTRO="${INTRO}\\nPatrol: adaptive enforcement active — levels adjust based on your behavior."
+    mkdir -p "$HOME/.patrol" 2>/dev/null
+    touch "$HOME/.patrol/.adaptive-introduced"
+  fi
 fi
 
 cat <<EOF

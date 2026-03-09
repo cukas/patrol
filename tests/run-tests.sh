@@ -1284,6 +1284,7 @@ assert_eq "investigation rule 'test-after-changes' loaded" "1" "$has_test_after"
 # Test: investigation rules can be overridden by repo rules
 MIG_SID2="migrate-override-$$"
 reset_config
+echo '{"adaptive": false}' > "$HOME/.patrol/config.json"
 reset_state "$MIG_SID2"
 MIG_STATE2="/tmp/patrol-${MIG_SID2}"
 mkdir -p "$PATROL_CWD/.patrol"
@@ -1551,6 +1552,115 @@ assert_eq "explicit min+max: inform escalates to warn, capped" "warn" "$result"
 
 # Clean up after adaptive tests
 rm -f "$HOME/.patrol/history.json"
+
+
+# ══════════════════════════════════════════════════════════════
+# 9. Adaptive integration tests (session-start)
+# ══════════════════════════════════════════════════════════════
+printf "\n▸ Adaptive integration tests (session-start)\n\n"
+
+# ── Session start applies adaptive level (escalation) ─────────
+# Create a repo rule with level=warn, record 8 violations, verify cached rules have level=block
+AD_SID="ad-esc-$$"
+reset_config
+reset_state "$AD_SID"
+rm -f "$HOME/.patrol/history.json"
+rm -f "$HOME/.patrol/.adaptive-introduced"
+AD_STATE="/tmp/patrol-${AD_SID}"
+
+cat > "$PATROL_CWD/.patrol/rules.json" <<'ADEOF1'
+{"version":"3.0","rules":[{"id":"test-adaptive-esc","name":"Adaptive esc test","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"git push"},"message":"no push"}]}
+ADEOF1
+
+for i in 1 2 3 4 5 6 7 8; do
+  run_lib patrol_adaptive_record_violation "test-adaptive-esc"
+done
+
+run_hook session-start.sh "{\"session_id\":\"$AD_SID\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+cached_level=$(jq -r '.[] | select(.id=="test-adaptive-esc") | .level' "$AD_STATE/rules.json" 2>/dev/null)
+assert_eq "session start escalates warn to block with high score" "block" "$cached_level"
+
+# ── Session start de-escalates ───────────────────────────────
+# No violations in history, rule with level=warn → should de-escalate to inform
+AD_SID2="ad-deesc-$$"
+reset_config
+reset_state "$AD_SID2"
+rm -f "$HOME/.patrol/history.json"
+rm -f "$HOME/.patrol/.adaptive-introduced"
+AD_STATE2="/tmp/patrol-${AD_SID2}"
+
+cat > "$PATROL_CWD/.patrol/rules.json" <<'ADEOF2'
+{"version":"3.0","rules":[{"id":"test-adaptive-deesc","name":"Adaptive deesc test","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"git push"},"message":"no push"}]}
+ADEOF2
+
+run_hook session-start.sh "{\"session_id\":\"$AD_SID2\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+cached_level2=$(jq -r '.[] | select(.id=="test-adaptive-deesc") | .level' "$AD_STATE2/rules.json" 2>/dev/null)
+assert_eq "session start de-escalates warn to inform with no violations" "inform" "$cached_level2"
+
+# ── Safety rules exempt ──────────────────────────────────────
+# Record violations for a _safety- rule, verify cached level stays block
+AD_SID3="ad-safety-$$"
+reset_config
+reset_state "$AD_SID3"
+rm -f "$HOME/.patrol/history.json"
+rm -f "$HOME/.patrol/.adaptive-introduced"
+AD_STATE3="/tmp/patrol-${AD_SID3}"
+
+# Record violations for a safety rule (shouldn't matter, level should stay unchanged)
+for i in 1 2 3 4 5 6 7 8; do
+  run_lib patrol_adaptive_record_violation "_safety-force-push-main"
+done
+
+run_hook session-start.sh "{\"session_id\":\"$AD_SID3\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+safety_level=$(jq -r '.[] | select(.id=="_safety-force-push-main") | .level' "$AD_STATE3/rules.json" 2>/dev/null)
+assert_eq "safety rule level stays block despite violations" "block" "$safety_level"
+
+# ── Banner mentions adaptive ─────────────────────────────────
+AD_SID4="ad-banner-$$"
+reset_config
+reset_state "$AD_SID4"
+rm -f "$HOME/.patrol/history.json"
+rm -f "$HOME/.patrol/.adaptive-introduced"
+
+cat > "$PATROL_CWD/.patrol/rules.json" <<'ADEOF4'
+{"version":"3.0","rules":[{"id":"test-ad-banner","name":"Banner test","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"x"},"message":"m"}]}
+ADEOF4
+
+result=$(run_hook session-start.sh "{\"session_id\":\"$AD_SID4\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}")
+assert_match "banner mentions adaptive" "adaptive" "$result"
+
+# ── Adaptive disabled ────────────────────────────────────────
+# Set config adaptive=false, verify levels are NOT adjusted
+AD_SID5="ad-disabled-$$"
+reset_config
+reset_state "$AD_SID5"
+rm -f "$HOME/.patrol/history.json"
+rm -f "$HOME/.patrol/.adaptive-introduced"
+AD_STATE5="/tmp/patrol-${AD_SID5}"
+
+echo '{"adaptive": false}' > "$HOME/.patrol/config.json"
+
+cat > "$PATROL_CWD/.patrol/rules.json" <<'ADEOF5'
+{"version":"3.0","rules":[{"id":"test-adaptive-off","name":"Adaptive off test","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"git push"},"message":"no push"}]}
+ADEOF5
+
+# Record violations — should NOT affect level because adaptive is disabled
+for i in 1 2 3 4 5 6 7 8; do
+  run_lib patrol_adaptive_record_violation "test-adaptive-off"
+done
+
+run_hook session-start.sh "{\"session_id\":\"$AD_SID5\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+cached_level5=$(jq -r '.[] | select(.id=="test-adaptive-off") | .level' "$AD_STATE5/rules.json" 2>/dev/null)
+assert_eq "adaptive disabled: level stays warn despite violations" "warn" "$cached_level5"
+
+# Verify banner does NOT mention adaptive when disabled
+result5=$(run_hook session-start.sh "{\"session_id\":\"$AD_SID5\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}")
+assert_no_match "adaptive disabled: banner does not mention adaptive" "adaptive" "$result5"
+
+# Clean up
+rm -f "$PATROL_CWD/.patrol/rules.json" 2>/dev/null
+rm -f "$HOME/.patrol/history.json"
+rm -f "$HOME/.patrol/.adaptive-introduced"
 
 
 # ══════════════════════════════════════════════════════════════
