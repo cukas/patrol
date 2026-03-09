@@ -1397,6 +1397,163 @@ rm -f "$PATROL_CWD/.patrol/rules.json" 2>/dev/null
 
 
 # ══════════════════════════════════════════════════════════════
+# 8. Adaptive score engine tests
+# ══════════════════════════════════════════════════════════════
+printf "\n▸ Adaptive score engine tests\n"
+
+# ── Score calculation ─────────────────────────────────────────
+printf "\n  Score calculation:\n"
+
+# Clean up history before adaptive tests
+rm -f "$HOME/.patrol/history.json"
+
+# Unknown rule returns score 0
+reset_config
+result=$(run_lib patrol_adaptive_get_score "unknown-rule-xyz")
+assert_eq "unknown rule returns score 0" "0" "$result"
+
+# After 1 violation, score is ~1
+reset_config
+rm -f "$HOME/.patrol/history.json"
+run_lib patrol_adaptive_record_violation "test-rule-1"
+result=$(run_lib patrol_adaptive_get_score "test-rule-1")
+# Score should be ~1.0 (with possible tiny decay for near-zero elapsed time)
+score_ok=$(awk -v s="$result" 'BEGIN { print (s >= 0.99 && s <= 1.01) ? "yes" : "no" }')
+assert_eq "after 1 violation score is ~1" "yes" "$score_ok"
+
+# After 2 violations (immediate), score is ~2
+reset_config
+rm -f "$HOME/.patrol/history.json"
+run_lib patrol_adaptive_record_violation "test-rule-2"
+run_lib patrol_adaptive_record_violation "test-rule-2"
+result=$(run_lib patrol_adaptive_get_score "test-rule-2")
+score_ok=$(awk -v s="$result" 'BEGIN { print (s >= 1.9 && s <= 2.1) ? "yes" : "no" }')
+assert_eq "after 2 violations score is ~2" "yes" "$score_ok"
+
+# total_violations increments correctly
+reset_config
+rm -f "$HOME/.patrol/history.json"
+run_lib patrol_adaptive_record_violation "test-rule-tv"
+run_lib patrol_adaptive_record_violation "test-rule-tv"
+run_lib patrol_adaptive_record_violation "test-rule-tv"
+history=$(run_lib patrol_adaptive_history)
+total=$(echo "$history" | jq -r '.rules["test-rule-tv"].total_violations')
+assert_eq "total_violations increments to 3" "3" "$total"
+
+# ── History read/write ────────────────────────────────────────
+printf "\n  History read/write:\n"
+
+# Missing history returns default
+rm -f "$HOME/.patrol/history.json"
+result=$(run_lib patrol_adaptive_history)
+version=$(echo "$result" | jq -r '.version')
+assert_eq "missing history returns version 1.0" "1.0" "$version"
+rules_empty=$(echo "$result" | jq '.rules | length')
+assert_eq "missing history has empty rules" "0" "$rules_empty"
+
+# After save, history persists
+rm -f "$HOME/.patrol/history.json"
+run_lib patrol_adaptive_record_violation "persist-test"
+assert_file_exists "history file written" "$HOME/.patrol/history.json"
+result=$(run_lib patrol_adaptive_history)
+has_rule=$(echo "$result" | jq 'has("rules") and (.rules | has("persist-test"))')
+assert_eq "saved history has rule entry" "true" "$has_rule"
+
+# ── Level adjustment ──────────────────────────────────────────
+printf "\n  Level adjustment:\n"
+
+# No history → score 0 → below deescalate threshold → de-escalates
+reset_config
+rm -f "$HOME/.patrol/history.json"
+result=$(run_lib patrol_adaptive_level "no-history-rule" "warn")
+assert_eq "no history: warn de-escalates to inform" "inform" "$result"
+
+# No history → inform stays inform (floor)
+reset_config
+rm -f "$HOME/.patrol/history.json"
+result=$(run_lib patrol_adaptive_level "no-history-rule2" "inform")
+assert_eq "de-escalation floor: inform stays inform" "inform" "$result"
+
+# High score escalates: warn → block
+reset_config
+rm -f "$HOME/.patrol/history.json"
+for i in 1 2 3 4 5 6 7 8; do
+  run_lib patrol_adaptive_record_violation "high-score-rule"
+done
+result=$(run_lib patrol_adaptive_level "high-score-rule" "warn")
+assert_eq "high score escalates warn to block" "block" "$result"
+
+# High score escalates: inform → warn
+reset_config
+rm -f "$HOME/.patrol/history.json"
+for i in 1 2 3 4 5 6 7 8; do
+  run_lib patrol_adaptive_record_violation "high-score-inform"
+done
+result=$(run_lib patrol_adaptive_level "high-score-inform" "inform")
+assert_eq "high score escalates inform to warn" "warn" "$result"
+
+# Escalation cap: block stays block
+reset_config
+rm -f "$HOME/.patrol/history.json"
+for i in 1 2 3 4 5 6 7 8; do
+  run_lib patrol_adaptive_record_violation "cap-rule"
+done
+result=$(run_lib patrol_adaptive_level "cap-rule" "block")
+assert_eq "escalation cap: block stays block" "block" "$result"
+
+# De-escalation: zero score block → warn
+reset_config
+rm -f "$HOME/.patrol/history.json"
+result=$(run_lib patrol_adaptive_level "zero-block" "block")
+assert_eq "zero score de-escalates block to warn" "warn" "$result"
+
+# ── Per-rule adaptive bounds ──────────────────────────────────
+printf "\n  Per-rule adaptive bounds:\n"
+
+# adaptive.max=warn caps escalation at warn (high score, inform → warn, not block)
+reset_config
+rm -f "$HOME/.patrol/history.json"
+for i in 1 2 3 4 5 6 7 8; do
+  run_lib patrol_adaptive_record_violation "bounded-rule-max"
+done
+result=$(run_lib patrol_adaptive_level_with_bounds "bounded-rule-max" "inform" "" "warn")
+assert_eq "max=warn caps escalation at warn" "warn" "$result"
+
+# adaptive.min=warn prevents de-escalation below warn
+reset_config
+rm -f "$HOME/.patrol/history.json"
+result=$(run_lib patrol_adaptive_level_with_bounds "bounded-rule-min" "warn" "warn" "")
+assert_eq "min=warn prevents de-escalation below warn" "warn" "$result"
+
+# Empty bounds use ±1 default — high score inform → warn (default max=warn)
+reset_config
+rm -f "$HOME/.patrol/history.json"
+for i in 1 2 3 4 5 6 7 8; do
+  run_lib patrol_adaptive_record_violation "default-bounds"
+done
+result=$(run_lib patrol_adaptive_level_with_bounds "default-bounds" "inform" "" "")
+assert_eq "empty bounds: inform escalates to warn (default max)" "warn" "$result"
+
+# Empty bounds: zero score warn → inform (default min=inform)
+reset_config
+rm -f "$HOME/.patrol/history.json"
+result=$(run_lib patrol_adaptive_level_with_bounds "default-deesc" "warn" "" "")
+assert_eq "empty bounds: warn de-escalates to inform (default min)" "inform" "$result"
+
+# Explicit min+max: min=inform, max=warn — high score inform → warn (not block)
+reset_config
+rm -f "$HOME/.patrol/history.json"
+for i in 1 2 3 4 5 6 7 8; do
+  run_lib patrol_adaptive_record_violation "both-bounds"
+done
+result=$(run_lib patrol_adaptive_level_with_bounds "both-bounds" "inform" "inform" "warn")
+assert_eq "explicit min+max: inform escalates to warn, capped" "warn" "$result"
+
+# Clean up after adaptive tests
+rm -f "$HOME/.patrol/history.json"
+
+
+# ══════════════════════════════════════════════════════════════
 # Summary
 # ══════════════════════════════════════════════════════════════
 printf "\n══════════════════════════════════════════\n"

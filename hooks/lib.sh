@@ -507,3 +507,250 @@ patrol_check_sequence() {
   # File not read but edited
   return 0
 }
+
+# ── Adaptive Score Engine ────────────────────────────────────────
+
+PATROL_ADAPTIVE_DECAY=0.95
+PATROL_ADAPTIVE_ESCALATE=5.0
+PATROL_ADAPTIVE_DEESCALATE=0.5
+
+# Read adaptive history from ~/.patrol/history.json
+# Returns JSON object with version and rules map
+patrol_adaptive_history() {
+  local history_file="$HOME/.patrol/history.json"
+  if [ ! -f "$history_file" ]; then
+    echo '{"version":"1.0","rules":{}}'
+    return 0
+  fi
+  cat "$history_file"
+}
+
+# Write history atomically (write to temp, mv)
+patrol_adaptive_save_history() {
+  local history="$1"
+  local history_file="$HOME/.patrol/history.json"
+  mkdir -p "$HOME/.patrol" 2>/dev/null
+  local tmp
+  tmp=$(mktemp "${history_file}.XXXXXX")
+  if printf '%s\n' "$history" > "$tmp" 2>/dev/null; then
+    mv "$tmp" "$history_file"
+  else
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
+# Parse ISO 8601 timestamp to epoch seconds
+# macOS: date -j -f, Linux: date -d
+_patrol_parse_iso_to_epoch() {
+  local iso="$1"
+  local epoch
+  # Try macOS first
+  epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso" "+%s" 2>/dev/null) && { echo "$epoch"; return 0; }
+  # Fallback to Linux
+  epoch=$(date -d "$iso" "+%s" 2>/dev/null) && { echo "$epoch"; return 0; }
+  # Last resort: return current time
+  date "+%s"
+}
+
+# Get current effective score for a rule, applying decay.
+# Args: rule_id
+# Returns: float score (0 if unknown rule)
+patrol_adaptive_get_score() {
+  local rule_id="$1"
+  local history
+  history=$(patrol_adaptive_history)
+
+  # Check if rule exists in history
+  local entry
+  entry=$(echo "$history" | jq -r --arg rid "$rule_id" '.rules[$rid] // empty')
+  if [ -z "$entry" ]; then
+    echo "0"
+    return 0
+  fi
+
+  local score last_updated
+  score=$(echo "$entry" | jq -r '.score // 0')
+  last_updated=$(echo "$entry" | jq -r '.last_updated // empty')
+
+  if [ -z "$last_updated" ]; then
+    echo "$score"
+    return 0
+  fi
+
+  # Calculate days since last update
+  local now_epoch last_epoch
+  now_epoch=$(date "+%s")
+  last_epoch=$(_patrol_parse_iso_to_epoch "$last_updated")
+
+  local decay
+  decay=$(patrol_config "adaptive_decay" "$PATROL_ADAPTIVE_DECAY")
+
+  # effective = score * decay^days_since_last_update
+  local effective
+  effective=$(awk -v s="$score" -v d="$decay" -v now="$now_epoch" -v last="$last_epoch" \
+    'BEGIN { days = (now - last) / 86400; if (days < 0) days = 0; printf "%.6f", s * (d ^ days) }')
+
+  echo "$effective"
+}
+
+# Record a violation for a rule.
+# Args: rule_id
+# Updates score: new_score = current_score * decay^days + 1.0
+# Increments total_violations. Writes atomically.
+patrol_adaptive_record_violation() {
+  local rule_id="$1"
+  local history
+  history=$(patrol_adaptive_history)
+
+  local now_iso
+  now_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  local now_epoch
+  now_epoch=$(date "+%s")
+
+  local decay
+  decay=$(patrol_config "adaptive_decay" "$PATROL_ADAPTIVE_DECAY")
+
+  # Get existing entry (may be empty for first-time)
+  local entry
+  entry=$(echo "$history" | jq -r --arg rid "$rule_id" '.rules[$rid] // empty')
+
+  local new_score total_violations
+  if [ -z "$entry" ]; then
+    # First-time: score = 1.0, total_violations = 1
+    new_score="1.000000"
+    total_violations=1
+  else
+    local old_score last_updated old_total
+    old_score=$(echo "$entry" | jq -r '.score // 0')
+    last_updated=$(echo "$entry" | jq -r '.last_updated // empty')
+    old_total=$(echo "$entry" | jq -r '.total_violations // 0')
+
+    if [ -z "$last_updated" ]; then
+      new_score=$(awk -v s="$old_score" 'BEGIN { printf "%.6f", s + 1.0 }')
+    else
+      local last_epoch
+      last_epoch=$(_patrol_parse_iso_to_epoch "$last_updated")
+      new_score=$(awk -v s="$old_score" -v d="$decay" -v now="$now_epoch" -v last="$last_epoch" \
+        'BEGIN { days = (now - last) / 86400; if (days < 0) days = 0; printf "%.6f", s * (d ^ days) + 1.0 }')
+    fi
+
+    total_violations=$((old_total + 1))
+  fi
+
+  # Update history
+  history=$(echo "$history" | jq --arg rid "$rule_id" \
+    --argjson score "$new_score" \
+    --argjson total "$total_violations" \
+    --arg ts "$now_iso" \
+    '.rules[$rid] = {"score": $score, "total_violations": $total, "last_updated": $ts}')
+
+  patrol_adaptive_save_history "$history"
+}
+
+# Calculate adaptive level for a rule.
+# Args: rule_id, configured_level
+# Returns: adjusted level string (inform/warn/block)
+patrol_adaptive_level() {
+  local rule_id="$1"
+  local configured_level="$2"
+
+  local score
+  score=$(patrol_adaptive_get_score "$rule_id")
+
+  local escalate_threshold deescalate_threshold
+  escalate_threshold=$(patrol_config "adaptive_escalate_threshold" "$PATROL_ADAPTIVE_ESCALATE")
+  deescalate_threshold=$(patrol_config "adaptive_deescalate_threshold" "$PATROL_ADAPTIVE_DEESCALATE")
+
+  # Level order: inform=0, warn=1, block=2
+  local level_num
+  case "$configured_level" in
+    inform) level_num=0 ;;
+    warn)   level_num=1 ;;
+    block)  level_num=2 ;;
+    *)      echo "$configured_level"; return 0 ;;
+  esac
+
+  # Check escalation/de-escalation
+  local should_escalate should_deescalate
+  should_escalate=$(awk -v s="$score" -v t="$escalate_threshold" 'BEGIN { print (s > t) ? "1" : "0" }')
+  should_deescalate=$(awk -v s="$score" -v t="$deescalate_threshold" 'BEGIN { print (s < t) ? "1" : "0" }')
+
+  if [ "$should_escalate" = "1" ]; then
+    level_num=$((level_num + 1))
+  elif [ "$should_deescalate" = "1" ]; then
+    level_num=$((level_num - 1))
+  fi
+
+  # Clamp to boundaries
+  [ "$level_num" -lt 0 ] && level_num=0
+  [ "$level_num" -gt 2 ] && level_num=2
+
+  # Convert back to string
+  case "$level_num" in
+    0) echo "inform" ;;
+    1) echo "warn" ;;
+    2) echo "block" ;;
+  esac
+}
+
+# Helper: convert level string to number
+_patrol_level_to_num() {
+  case "$1" in
+    inform) echo 0 ;;
+    warn)   echo 1 ;;
+    block)  echo 2 ;;
+    *)      echo 1 ;;
+  esac
+}
+
+# Helper: convert level number to string
+_patrol_num_to_level() {
+  case "$1" in
+    0) echo "inform" ;;
+    1) echo "warn" ;;
+    2) echo "block" ;;
+    *) echo "warn" ;;
+  esac
+}
+
+# Calculate adaptive level with explicit min/max bounds.
+# Args: rule_id, configured_level, min_level, max_level
+# If min_level or max_level are empty, use default ±1 from configured_level.
+patrol_adaptive_level_with_bounds() {
+  local rule_id="$1"
+  local configured_level="$2"
+  local min_level="${3:-}"
+  local max_level="${4:-}"
+
+  # Get the unbounded adaptive level first
+  local adaptive
+  adaptive=$(patrol_adaptive_level "$rule_id" "$configured_level")
+
+  local adaptive_num configured_num
+  adaptive_num=$(_patrol_level_to_num "$adaptive")
+  configured_num=$(_patrol_level_to_num "$configured_level")
+
+  # Calculate default bounds if not provided (±1 from configured, clamped to 0-2)
+  local min_num max_num
+  if [ -z "$min_level" ]; then
+    min_num=$((configured_num - 1))
+    [ "$min_num" -lt 0 ] && min_num=0
+  else
+    min_num=$(_patrol_level_to_num "$min_level")
+  fi
+
+  if [ -z "$max_level" ]; then
+    max_num=$((configured_num + 1))
+    [ "$max_num" -gt 2 ] && max_num=2
+  else
+    max_num=$(_patrol_level_to_num "$max_level")
+  fi
+
+  # Clamp adaptive to bounds
+  [ "$adaptive_num" -lt "$min_num" ] && adaptive_num=$min_num
+  [ "$adaptive_num" -gt "$max_num" ] && adaptive_num=$max_num
+
+  # Convert back to string
+  _patrol_num_to_level "$adaptive_num"
+}
