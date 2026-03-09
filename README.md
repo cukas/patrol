@@ -8,6 +8,8 @@
 
 **Claude jumps to fixes before understanding the problem.** Patrol stops that.
 
+> **Zero token cost during normal coding.** No MCP servers, no background processes, no config files. Pure shell hooks that stay silent until Claude starts patching without investigating — then it escalates.
+
 ### Install
 
 ```bash
