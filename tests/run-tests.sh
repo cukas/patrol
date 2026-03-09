@@ -356,6 +356,44 @@ count=$(wc -l < "$CAPPED_FILE" | tr -d ' ')
 assert_eq "default cap doesn't truncate small files" "10" "$count"
 
 
+# ── patrol_merged_keywords ───────────────────────────────────
+printf "\n  patrol_merged_keywords:\n"
+
+reset_config
+result=$(run_lib patrol_merged_keywords)
+assert_match "returns default keywords without config" "fix" "$result"
+assert_match "defaults include German keyword" "Fehler" "$result"
+
+reset_config
+echo '{"custom_keywords": ["regression", "timeout"]}' > "$HOME/.patrol/config.json"
+result=$(run_lib patrol_merged_keywords)
+assert_match "includes custom keywords" "regression" "$result"
+assert_match "still includes defaults" "fix" "$result"
+
+# ── patrol_yoda_message ──────────────────────────────────────
+printf "\n  patrol_yoda_message:\n"
+
+reset_config
+echo '{"easter_eggs": false}' > "$HOME/.patrol/config.json"
+result=$(run_lib patrol_yoda_message "nudge" "2 unread")
+assert_eq "returns normal message when easter_eggs disabled" "2 unread" "$result"
+
+reset_config
+echo '{"easter_eggs": true}' > "$HOME/.patrol/config.json"
+result=$(run_lib patrol_yoda_message "nudge" "2 unread")
+assert_match "returns yoda message when easter_eggs enabled" "hmm" "$result"
+
+reset_config
+echo '{"easter_eggs": true}' > "$HOME/.patrol/config.json"
+result=$(run_lib patrol_yoda_message "warning" "3 patches")
+assert_match "returns yoda warning" "band-aid this is" "$result"
+
+reset_config
+echo '{"easter_eggs": true}' > "$HOME/.patrol/config.json"
+result=$(run_lib patrol_yoda_message "stop" "STOP")
+assert_match "returns yoda stop" "investigate you must" "$result"
+
+
 # ══════════════════════════════════════════════════════════════
 # 2. session-start.sh integration tests
 # ══════════════════════════════════════════════════════════════

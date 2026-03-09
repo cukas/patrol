@@ -207,3 +207,39 @@ patrol_verify_commands() {
     echo "$configured"
   fi
 }
+
+# ─── Default keywords ────────────────────────────────────────
+PATROL_DEFAULT_KEYWORDS='["fix","bug","broken","error","crash","doesn'\''t work","not working","Fehler","kaputt","Absturz","funktioniert nicht","erreur","plantage","cassé","ne marche pas"]'
+
+# ─── Merged keywords (defaults + custom) ─────────────────────
+# Returns a JSON array of all keywords (defaults + custom_keywords from config)
+patrol_merged_keywords() {
+  local custom
+  custom=$(patrol_config "custom_keywords" "[]")
+
+  # Merge: defaults + custom, deduplicated
+  echo "$PATROL_DEFAULT_KEYWORDS" "$custom" | jq -s 'add | unique'
+}
+
+# ─── Easter egg messages ──────────────────────────────────────
+# Usage: patrol_yoda_message "nudge|warning|stop" "normal_message"
+# Returns yoda-themed message if easter_eggs enabled, otherwise the normal message
+patrol_yoda_message() {
+  local level="$1"
+  local normal_msg="$2"
+  local easter_eggs
+  easter_eggs=$(patrol_config "easter_eggs" "false")
+
+  if [ "$easter_eggs" != "true" ]; then
+    echo "$normal_msg"
+    return
+  fi
+
+  case "$level" in
+    nudge)   echo "${normal_msg}, hmm" ;;
+    warning) echo "band-aid this is" ;;
+    stop)    echo "investigate you must" ;;
+    verify)  echo "verify your work, you should" ;;
+    *)       echo "$normal_msg" ;;
+  esac
+}
