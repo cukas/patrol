@@ -974,6 +974,12 @@ ec=0
 echo "$BAD_TRIGGER" | run_lib patrol_validate_rule 2>/dev/null || ec=$?
 assert_exit_code "patrol_validate_rule rejects invalid trigger type" "1" "$ec"
 
+# Test: rule with invalid require type fails
+BAD_REQUIRE='{"id":"x","name":"X","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"x"},"require":{"type":"magic"},"message":"x"}'
+ec=0
+echo "$BAD_REQUIRE" | run_lib patrol_validate_rule 2>/dev/null || ec=$?
+assert_exit_code "patrol_validate_rule rejects invalid require type" "1" "$ec"
+
 
 # ══════════════════════════════════════════════════════════════
 # Summary
