@@ -1733,6 +1733,75 @@ rm -f "$HOME/.patrol/history.json"
 
 
 # ══════════════════════════════════════════════════════════════
+# Adaptive end-to-end lifecycle tests
+# ══════════════════════════════════════════════════════════════
+printf "\n▸ Adaptive end-to-end tests\n\n"
+
+# Full lifecycle: session-start → tool-tracker violation → history updated → next session adapted
+E2E_SID="e2e-adapt-$$"
+reset_config
+reset_state "$E2E_SID"
+rm -f "$HOME/.patrol/history.json"
+rm -f "$HOME/.patrol/.adaptive-introduced"
+E2E_STATE="/tmp/patrol-${E2E_SID}"
+
+# Create a repo rule
+cat > "$PATROL_CWD/.patrol/rules.json" <<'E2EEOF'
+{"version":"3.0","rules":[{"id":"e2e-lifecycle","name":"E2E lifecycle","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"deploy"},"message":"Run tests before deploying."}]}
+E2EEOF
+
+# Phase 1: Fresh start — no violations, warn de-escalates to inform
+run_hook session-start.sh "{\"session_id\":\"$E2E_SID\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+cached_level=$(jq -r '.[] | select(.id=="e2e-lifecycle") | .level' "$E2E_STATE/rules.json" 2>/dev/null)
+assert_eq "e2e: fresh start, warn de-escalates to inform" "inform" "$cached_level"
+
+# Phase 2: Accumulate violations via tool-tracker (not directly via patrol_adaptive_record_violation)
+for i in 1 2 3 4 5 6 7 8; do
+  run_hook tool-tracker.sh "{\"session_id\":\"$E2E_SID\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"deploy prod\"},\"cwd\":\"$PATROL_CWD\"}"
+done
+
+# Verify history was written by tool-tracker
+e2e_score=$(jq -r '.rules["e2e-lifecycle"].score // "0"' "$HOME/.patrol/history.json" 2>/dev/null)
+score_high=$(awk -v s="$e2e_score" 'BEGIN { print (s > 5.0) ? "yes" : "no" }')
+assert_eq "e2e: tool-tracker accumulated high score" "yes" "$score_high"
+
+# Phase 3: New session — rule should escalate to block
+E2E_SID2="e2e-adapt2-$$"
+reset_state "$E2E_SID2"
+E2E_STATE2="/tmp/patrol-${E2E_SID2}"
+result=$(run_hook session-start.sh "{\"session_id\":\"$E2E_SID2\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}")
+cached_level2=$(jq -r '.[] | select(.id=="e2e-lifecycle") | .level' "$E2E_STATE2/rules.json" 2>/dev/null)
+assert_eq "e2e: after violations, warn escalates to block" "block" "$cached_level2"
+assert_match "e2e: banner shows adaptive change" "adaptive" "$result"
+
+# Phase 4: Safety rules stay exempt through full lifecycle
+rm -f "$HOME/.patrol/history.json"
+E2E_SID3="e2e-safety-$$"
+reset_state "$E2E_SID3"
+rm -f "$PATROL_CWD/.patrol/rules.json"
+E2E_STATE3="/tmp/patrol-${E2E_SID3}"
+
+# Even without repo rules, safety rules exist. Trigger force-push violations.
+run_hook session-start.sh "{\"session_id\":\"$E2E_SID3\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+for i in 1 2 3 4 5 6 7 8; do
+  run_hook tool-tracker.sh "{\"session_id\":\"$E2E_SID3\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push --force origin main\"},\"cwd\":\"$PATROL_CWD\"}"
+done
+
+# New session — safety should stay block
+E2E_SID4="e2e-safety2-$$"
+reset_state "$E2E_SID4"
+E2E_STATE4="/tmp/patrol-${E2E_SID4}"
+run_hook session-start.sh "{\"session_id\":\"$E2E_SID4\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+safety_cached=$(jq -r '.[] | select(.id=="_safety-force-push-main") | .level' "$E2E_STATE4/rules.json" 2>/dev/null)
+assert_eq "e2e: safety rule stays block through full lifecycle" "block" "$safety_cached"
+
+# Clean up
+rm -f "$PATROL_CWD/.patrol/rules.json" 2>/dev/null
+rm -f "$HOME/.patrol/history.json"
+rm -f "$HOME/.patrol/.adaptive-introduced"
+
+
+# ══════════════════════════════════════════════════════════════
 # Summary
 # ══════════════════════════════════════════════════════════════
 printf "\n══════════════════════════════════════════\n"
