@@ -1299,6 +1299,104 @@ rm -f "$PATROL_CWD/.patrol/rules.json" 2>/dev/null
 
 
 # ══════════════════════════════════════════════════════════════
+# 7. V3 integration — full rule flow
+# ══════════════════════════════════════════════════════════════
+printf "\n▸ V3 integration tests\n\n"
+
+# Test: Full flow — session-start loads rules → bash triggers → prompt enforces
+INT_SID="int-$$"
+reset_config
+reset_state "$INT_SID"
+INT_STATE="/tmp/patrol-${INT_SID}"
+
+# Create a repo rule: warn on git push without prior test
+mkdir -p "$PATROL_CWD/.patrol"
+cat > "$PATROL_CWD/.patrol/rules.json" <<'IEOF'
+{"version":"3.0","rules":[
+  {"id":"no-push-without-test","name":"Test before push","category":"workflow","level":"warn",
+   "trigger":{"type":"bash_command","match":"git push"},
+   "require":{"type":"bash_ran","match":"npm test|pnpm test"},
+   "message":"Run tests before pushing."}
+]}
+IEOF
+
+# Step 1: Session start — loads rules
+run_hook session-start.sh "{\"session_id\":\"$INT_SID\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+assert_file_exists "integration: rules cached after session-start" "$INT_STATE/rules.json"
+# Verify our custom rule is in the cache
+has_custom=$(jq '[.[] | select(.id=="no-push-without-test")] | length' "$INT_STATE/rules.json" 2>/dev/null)
+assert_eq "integration: custom rule loaded" "1" "$has_custom"
+
+# Step 2: Simulate git push WITHOUT prior test
+run_hook tool-tracker.sh "{\"session_id\":\"$INT_SID\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push origin main\"},\"cwd\":\"$PATROL_CWD\"}"
+assert_file_exists "integration: violation recorded" "$INT_STATE/violations.jsonl"
+v_count=$(wc -l < "$INT_STATE/violations.jsonl" 2>/dev/null | tr -d ' ')
+assert_eq "integration: exactly 1 violation" "1" "$v_count"
+
+# Step 3: Prompt monitor enforces the violation
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$INT_SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"done\"}")
+assert_match "integration: warning message shown" "Run tests before pushing" "$result"
+
+# Step 4: Violations cleared after enforcement
+v_after=$(cat "$INT_STATE/violations.jsonl" 2>/dev/null)
+assert_empty "integration: violations cleared after enforcement" "$v_after"
+
+# Test: Full flow — safety rule blocks force-push
+INT_SID2="int-safety-$$"
+reset_config
+reset_state "$INT_SID2"
+INT_STATE2="/tmp/patrol-${INT_SID2}"
+rm -f "$PATROL_CWD/.patrol/rules.json" 2>/dev/null
+
+# Step 1: Session start (only safety + investigation rules)
+run_hook session-start.sh "{\"session_id\":\"$INT_SID2\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+
+# Step 2: Simulate git push --force origin main
+run_hook tool-tracker.sh "{\"session_id\":\"$INT_SID2\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push --force origin main\"},\"cwd\":\"$PATROL_CWD\"}"
+assert_file_exists "integration: safety violation recorded" "$INT_STATE2/violations.jsonl"
+
+# Step 3: Prompt monitor shows block
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$INT_SID2\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"push it\"}")
+assert_match "integration: block message for force-push" "BLOCKED" "$result"
+assert_match "integration: safety message shown" "Force-pushing to main" "$result"
+
+# Test: No violation when require is satisfied
+INT_SID3="int-require-$$"
+reset_config
+reset_state "$INT_SID3"
+INT_STATE3="/tmp/patrol-${INT_SID3}"
+mkdir -p "$PATROL_CWD/.patrol"
+cat > "$PATROL_CWD/.patrol/rules.json" <<'IEOF2'
+{"version":"3.0","rules":[
+  {"id":"test-first","name":"Test first","category":"workflow","level":"warn",
+   "trigger":{"type":"bash_command","match":"git push"},
+   "require":{"type":"bash_ran","match":"npm test"},
+   "message":"Run tests first"}
+]}
+IEOF2
+
+# Session start
+run_hook session-start.sh "{\"session_id\":\"$INT_SID3\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+
+# Run npm test first (satisfies require)
+run_hook tool-tracker.sh "{\"session_id\":\"$INT_SID3\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"npm test\"},\"cwd\":\"$PATROL_CWD\"}"
+
+# Then git push (trigger matches but require satisfied)
+run_hook tool-tracker.sh "{\"session_id\":\"$INT_SID3\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push origin main\"},\"cwd\":\"$PATROL_CWD\"}"
+
+# Should NOT have violations
+if [ -f "$INT_STATE3/violations.jsonl" ] && [ -s "$INT_STATE3/violations.jsonl" ]; then
+  has_v=$(grep -c "test-first" "$INT_STATE3/violations.jsonl" 2>/dev/null || echo "0")
+else
+  has_v="0"
+fi
+assert_eq "integration: no violation when require satisfied" "0" "$has_v"
+
+# Clean up
+rm -f "$PATROL_CWD/.patrol/rules.json" 2>/dev/null
+
+
+# ══════════════════════════════════════════════════════════════
 # Summary
 # ══════════════════════════════════════════════════════════════
 printf "\n══════════════════════════════════════════\n"
