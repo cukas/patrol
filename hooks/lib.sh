@@ -410,7 +410,7 @@ patrol_merge_rules() {
 # Load all rules from all layers + built-in safety. Returns merged JSON array.
 patrol_load_all_rules() {
   local company_file="${PATROL_COMPANY_RULES:-$HOME/.patrol/company.json}"
-  local repo_file="${PATROL_REPO_RULES:-.patrol/rules.json}"
+  local repo_file="${PATROL_REPO_RULES:-${PATROL_CWD:-.}/.patrol/rules.json}"
   local personal_file="${PATROL_PERSONAL_RULES:-$HOME/.patrol/my-rules.json}"
 
   local company repo personal safety
@@ -424,9 +424,15 @@ patrol_load_all_rules() {
   local safety_file="$script_dir/../templates/safety-rules.json"
   safety=$(patrol_load_rules "$safety_file")
 
-  # Merge: safety (base) <- company <- repo <- personal
+  # Built-in investigation rules (v2 behavior as templates)
+  local investigation_file="$script_dir/../templates/investigation-rules.json"
+  local investigation
+  investigation=$(patrol_load_rules "$investigation_file")
+
+  # Merge: safety (base) <- investigation <- company <- repo <- personal
   local merged
-  merged=$(patrol_merge_rules "$safety" "$company" "[]")
+  merged=$(patrol_merge_rules "$safety" "$investigation" "[]")
+  merged=$(patrol_merge_rules "$merged" "$company" "[]")
   merged=$(patrol_merge_rules "$merged" "$repo" "[]")
   merged=$(patrol_merge_rules "$merged" "[]" "$personal")
 

@@ -1262,6 +1262,42 @@ assert_match "banner shows rule count" "rules loaded" "$result"
 rm -f "$PATROL_CWD/.patrol/rules.json" 2>/dev/null
 
 
+# ── V2 migration as rule templates ───────────────────────────
+printf "\n  V2 migration as rule templates:\n"
+
+# Test: investigation rules loaded by default
+MIG_SID="migrate-$$"
+reset_config
+reset_state "$MIG_SID"
+MIG_STATE="/tmp/patrol-${MIG_SID}"
+rm -f "$PATROL_CWD/.patrol/rules.json" 2>/dev/null
+run_hook session-start.sh "{\"session_id\":\"$MIG_SID\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+has_read_before_edit=$(jq '[.[] | select(.id=="read-before-edit")] | length' "$MIG_STATE/rules.json" 2>/dev/null || echo "0")
+assert_eq "investigation rule 'read-before-edit' loaded" "1" "$has_read_before_edit"
+
+has_investigate=$(jq '[.[] | select(.id=="investigate-first")] | length' "$MIG_STATE/rules.json" 2>/dev/null || echo "0")
+assert_eq "investigation rule 'investigate-first' loaded" "1" "$has_investigate"
+
+has_test_after=$(jq '[.[] | select(.id=="test-after-changes")] | length' "$MIG_STATE/rules.json" 2>/dev/null || echo "0")
+assert_eq "investigation rule 'test-after-changes' loaded" "1" "$has_test_after"
+
+# Test: investigation rules can be overridden by repo rules
+MIG_SID2="migrate-override-$$"
+reset_config
+reset_state "$MIG_SID2"
+MIG_STATE2="/tmp/patrol-${MIG_SID2}"
+mkdir -p "$PATROL_CWD/.patrol"
+cat > "$PATROL_CWD/.patrol/rules.json" <<'MIGEOF'
+{"version":"3.0","rules":[{"id":"read-before-edit","name":"Custom read rule","category":"workflow","level":"block","trigger":{"type":"sequence","pattern":"edit-without-read"},"message":"Custom: must read first"}]}
+MIGEOF
+run_hook session-start.sh "{\"session_id\":\"$MIG_SID2\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+level=$(jq -r '.[] | select(.id=="read-before-edit") | .level' "$MIG_STATE2/rules.json" 2>/dev/null)
+assert_eq "repo can override investigation rule level" "block" "$level"
+msg=$(jq -r '.[] | select(.id=="read-before-edit") | .message' "$MIG_STATE2/rules.json" 2>/dev/null)
+assert_match "repo overrides investigation rule message" "Custom" "$msg"
+rm -f "$PATROL_CWD/.patrol/rules.json" 2>/dev/null
+
+
 # ══════════════════════════════════════════════════════════════
 # Summary
 # ══════════════════════════════════════════════════════════════

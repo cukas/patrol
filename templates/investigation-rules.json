@@ -1,0 +1,34 @@
+{
+  "version": "3.0",
+  "rules": [
+    {
+      "id": "read-before-edit",
+      "name": "Read before editing",
+      "category": "workflow",
+      "level": "warn",
+      "trigger": { "type": "sequence", "pattern": "edit-without-read" },
+      "message": "You edited {file} without reading it first. Read the file to understand current implementation.",
+      "tags": ["investigation", "discipline"]
+    },
+    {
+      "id": "investigate-first",
+      "name": "Investigate before fixing",
+      "category": "workflow",
+      "level": "inform",
+      "trigger": { "type": "keyword", "match": ["fix", "bug", "broken", "error", "crash", "doesn't work", "not working", "Fehler", "funktioniert nicht", "kaputt", "ne marche pas", "cass\u00e9"] },
+      "message": "Bug keywords detected. Consider using /trace-fix to investigate the root cause before editing.",
+      "suggest": "/trace-fix",
+      "tags": ["investigation", "discipline"]
+    },
+    {
+      "id": "test-after-changes",
+      "name": "Run tests after changes",
+      "category": "workflow",
+      "level": "inform",
+      "trigger": { "type": "sequence", "pattern": "3-edits-without-test" },
+      "require": { "type": "bash_ran", "match": "test|jest|pytest|cargo test|mvn verify|gradlew test", "within": "session" },
+      "message": "You've changed {edit_count} files without running tests. Consider running: {detected_test_command}",
+      "tags": ["testing", "discipline"]
+    }
+  ]
+}
