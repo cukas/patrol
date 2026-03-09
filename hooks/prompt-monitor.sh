@@ -112,10 +112,11 @@ if [ -f "$VIOLATIONS_FILE" ] && [ -s "$VIOLATIONS_FILE" ]; then
   INFORM_MSGS=""
 
   while IFS= read -r violation; do
-    v_level=$(echo "$violation" | jq -r '.level // empty')
-    v_message=$(echo "$violation" | jq -r '.message // empty')
-    v_rule_id=$(echo "$violation" | jq -r '.rule_id // empty')
-    [ -z "$v_level" ] || [ -z "$v_message" ] && continue
+    v_level=$(echo "$violation" | jq -r '.level // empty' 2>/dev/null) || continue
+    v_message=$(echo "$violation" | jq -r '.message // empty' 2>/dev/null) || continue
+    v_rule_id=$(echo "$violation" | jq -r '.rule_id // empty' 2>/dev/null) || continue
+    [ -z "$v_level" ] && continue
+    [ -z "$v_message" ] && continue
 
     case "$v_level" in
       block)
