@@ -171,7 +171,11 @@ patrol_detect_verify_commands() {
     commands+=("make test")
   fi
 
-  printf '%s\n' "${commands[@]}" | jq -R . | jq -s .
+  if [ ${#commands[@]} -eq 0 ]; then
+    echo '[]'
+  else
+    printf '%s\n' "${commands[@]}" | jq -R . | jq -s .
+  fi
 }
 
 # ─── Get verify commands (config or auto-detect) ─────────────

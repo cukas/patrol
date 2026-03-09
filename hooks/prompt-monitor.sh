@@ -39,9 +39,13 @@ else
     MSG_LOWER=$(echo "$USER_MESSAGE" | tr '[:upper:]' '[:lower:]')
     KEYWORD_MATCH=$(echo "$KEYWORDS" | jq -r '.[]' 2>/dev/null | while read -r kw; do
       kw_lower=$(echo "$kw" | tr '[:upper:]' '[:lower:]')
-      if echo "$MSG_LOWER" | grep -qF "$kw_lower"; then
-        echo "1"
-        break
+      # Use word boundary matching for single words, fixed-string for phrases
+      if echo "$kw_lower" | grep -q ' '; then
+        # Multi-word phrase: fixed-string match (e.g., "doesn't work")
+        echo "$MSG_LOWER" | grep -qF "$kw_lower" && { echo "1"; break; }
+      else
+        # Single word: word boundary match (prevents "fix" matching "prefix")
+        echo "$MSG_LOWER" | grep -qwF "$kw_lower" && { echo "1"; break; }
       fi
     done)
     if [ "$KEYWORD_MATCH" = "1" ]; then
@@ -61,7 +65,10 @@ NUDGE_LEVEL=0
 
 [ -f "$STATE_DIR/edits" ] && EDIT_COUNT=$(wc -l < "$STATE_DIR/edits" | tr -d ' ')
 [ -f "$STATE_DIR/reads" ] && READ_COUNT=$(wc -l < "$STATE_DIR/reads" | tr -d ' ')
-[ -f "$STATE_DIR/nudge-level" ] && NUDGE_LEVEL=$(cat "$STATE_DIR/nudge-level" | tr -d ' ')
+if [ -f "$STATE_DIR/nudge-level" ]; then
+  _nl=$(cat "$STATE_DIR/nudge-level" | tr -d '[:space:]')
+  [[ "$_nl" =~ ^[0-9]+$ ]] && NUDGE_LEVEL=$_nl
+fi
 
 # Count edits to files that weren't read first
 if [ "$EDIT_COUNT" -gt 0 ] && [ -f "$STATE_DIR/edits" ]; then
@@ -115,6 +122,10 @@ EOF
 fi
 
 # ─── Check 2: Build/test verification ───────────────────────
+# Skip verify check when patrol is explicitly off
+if [ "$MANUAL_MODE" = "off" ]; then
+  exit 0
+fi
 if [ "$EDIT_COUNT" -gt 0 ]; then
   VERIFIED=false
   [ -f "$STATE_DIR/verified" ] && VERIFIED=true
