@@ -35,7 +35,7 @@ elif [ "$MANUAL_MODE" = "off" ]; then
 else
   AUTO_DETECT=$(patrol_config "auto_detect_bugfix" "true")
   if [ "$AUTO_DETECT" = "true" ] && [ -n "$USER_MESSAGE" ]; then
-    KEYWORDS=$(patrol_config "keywords" '["fix","bug","broken","error","crash","doesn'\''t work","not working"]')
+    KEYWORDS=$(patrol_config "keywords" '["fix","bug","broken","error","crash","doesn'\''t work","not working","Fehler","kaputt","Absturz","funktioniert nicht","erreur","plantage","cassé","ne marche pas"]')
     MSG_LOWER=$(echo "$USER_MESSAGE" | tr '[:upper:]' '[:lower:]')
     KEYWORD_MATCH=""
     while read -r kw; do

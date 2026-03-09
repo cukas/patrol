@@ -63,7 +63,7 @@ Files changed, no build/test     → 🔧 Patrol: 5 files changed, no build/test
 
 ## Three Layers of Protection
 
-1. **Investigation Gate** — Detects bug-fix sessions automatically from keywords (`fix`, `bug`, `broken`, `error`, `crash`, `doesn't work`, `not working`) or manually via `/patrol-on`. Tracks which files Claude reads vs edits. If Claude starts editing without reading, escalating warnings fire.
+1. **Investigation Gate** — Detects bug-fix sessions automatically from keywords (`fix`, `bug`, `broken`, `error`, `crash`, `doesn't work`, `not working` — plus German and French equivalents) or manually via `/patrol-on`. Tracks which files Claude reads vs edits. If Claude starts editing without reading, escalating warnings fire.
 
 2. **Band-Aid Detector** — Counts consecutive edits without investigation. After the configurable threshold (default 3), warns Claude to stop patching and trace the root cause. At 4+ patches with no investigation, issues a hard STOP.
 
@@ -96,7 +96,7 @@ Patrol uses two config layers — global and per-project:
 {
   "enabled": true,
   "auto_detect_bugfix": true,
-  "keywords": ["fix", "bug", "broken", "error", "crash", "doesn't work", "not working"],
+  "keywords": ["fix", "bug", "broken", "error", "crash", "doesn't work", "not working", "Fehler", "kaputt", "Absturz", "funktioniert nicht", "erreur", "plantage", "cassé", "ne marche pas"],
   "band_aid_threshold": 3,
   "verify_commands": "auto",
   "escalation": "siren",
@@ -109,7 +109,7 @@ Patrol uses two config layers — global and per-project:
 |---------|---------|-------------|
 | `enabled` | `true` | Enable/disable Patrol globally |
 | `auto_detect_bugfix` | `true` | Auto-detect bug-fix sessions from keywords in user messages |
-| `keywords` | `["fix","bug","broken","error","crash","doesn't work","not working"]` | Keywords that trigger bug-fix mode |
+| `keywords` | `["fix","bug","broken","error","crash","doesn't work","not working","Fehler","kaputt","Absturz","funktioniert nicht","erreur","plantage","cassé","ne marche pas"]` | Keywords that trigger bug-fix mode (EN/DE/FR) |
 | `band_aid_threshold` | `3` | Consecutive edits before escalating to warning level |
 | `verify_commands` | `"auto"` | Build/test commands to detect, or `"auto"` to auto-detect from project files |
 | `escalation` | `"siren"` | Escalation style |

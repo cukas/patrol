@@ -29,14 +29,14 @@ case "$TOOL_NAME" in
   Read)
     FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
     if [ -n "$FILE_PATH" ]; then
-      echo "$FILE_PATH" >> "$STATE_DIR/reads"
+      patrol_append_capped "$STATE_DIR/reads" "$FILE_PATH"
       patrol_debug "read tracked: $FILE_PATH"
     fi
     ;;
   Edit|Write)
     FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
     if [ -n "$FILE_PATH" ]; then
-      echo "$FILE_PATH" >> "$STATE_DIR/edits"
+      patrol_append_capped "$STATE_DIR/edits" "$FILE_PATH"
       patrol_debug "edit tracked: $FILE_PATH"
     fi
     ;;

@@ -42,6 +42,22 @@ Before writing ANY code, present to the user:
 - Run build and tests
 - Confirm the fix addresses the symptom
 
+## Example Investigation
+
+**Symptom:** "The sidebar counter shows 0 items even after adding tasks."
+
+**Step 1 — Understand:** Expected: counter increments when a task is added. Actual: always shows 0. Reproducible on every add.
+
+**Step 2 — Trace:** Read `TaskList.tsx` (renders counter) → `useTaskStore.ts` (Zustand store) → `addTask()` action → `Sidebar.tsx` (subscribes to `tasks.length`).
+
+**Step 3 — Hypothesis:** `Sidebar.tsx` subscribes to `store.tasks` but `addTask()` mutates the array in place instead of creating a new reference. Zustand's shallow comparison doesn't detect the change. Confidence: HIGH — the `push()` call on line 42 of `useTaskStore.ts` is the smoking gun.
+
+**Step 4 — Verify:** Confirmed: `addTask` does `state.tasks.push(task)` instead of `tasks: [...state.tasks, task]`. Zustand docs confirm shallow equality check requires new references.
+
+**Step 5 — Present:** Root cause: in-place mutation. Fix: spread into new array. Risk: low — only changes the add path, existing reads unaffected.
+
+**Step 6 — Implement:** Change `push()` to spread, run `pnpm test`, verify counter updates.
+
 ## Anti-Patterns to Avoid
 - Editing a file you haven't read
 - Trying a fix "to see if it works"

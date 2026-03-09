@@ -130,6 +130,23 @@ patrol_state_dir() {
   echo "$dir"
 }
 
+# ─── Capped file append ─────────────────────────────────────
+# Appends a line to a file, keeping only the last N lines (default 500)
+patrol_append_capped() {
+  local file="$1"
+  local line="$2"
+  local max="${3:-500}"
+
+  echo "$line" >> "$file"
+
+  local count
+  count=$(wc -l < "$file" 2>/dev/null | tr -d ' ')
+  if [ "${count:-0}" -gt "$max" ] 2>/dev/null; then
+    local tmp="${file}.tmp.$$"
+    tail -n "$max" "$file" > "$tmp" 2>/dev/null && mv "$tmp" "$file" 2>/dev/null || rm -f "$tmp"
+  fi
+}
+
 # ─── Auto-detect verify commands ─────────────────────────────
 patrol_detect_verify_commands() {
   local cwd="${1:-.}"

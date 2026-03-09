@@ -323,6 +323,38 @@ assert_match "escapes newlines" 'line1\\nline2' "$result"
 result=$(run_lib patrol_escape_json 'simple')
 assert_eq "simple string unchanged" "simple" "$result"
 
+# ── patrol_append_capped ─────────────────────────────────────
+printf "\n  patrol_append_capped:\n"
+
+CAPPED_FILE="$TMPDIR_ROOT/capped-test"
+
+# Basic append works
+rm -f "$CAPPED_FILE"
+run_lib patrol_append_capped "$CAPPED_FILE" "line1"
+run_lib patrol_append_capped "$CAPPED_FILE" "line2"
+count=$(wc -l < "$CAPPED_FILE" | tr -d ' ')
+assert_eq "basic append writes lines" "2" "$count"
+
+# Cap at 5 lines: write 7, should keep last 5
+rm -f "$CAPPED_FILE"
+for i in 1 2 3 4 5 6 7; do
+  run_lib patrol_append_capped "$CAPPED_FILE" "line$i" "5"
+done
+count=$(wc -l < "$CAPPED_FILE" | tr -d ' ')
+assert_eq "caps file at max lines" "5" "$count"
+first=$(head -1 "$CAPPED_FILE")
+assert_eq "keeps most recent lines after cap" "line3" "$first"
+last=$(tail -1 "$CAPPED_FILE")
+assert_eq "last line is newest after cap" "line7" "$last"
+
+# Default cap (500) doesn't truncate small files
+rm -f "$CAPPED_FILE"
+for i in $(seq 1 10); do
+  run_lib patrol_append_capped "$CAPPED_FILE" "line$i"
+done
+count=$(wc -l < "$CAPPED_FILE" | tr -d ' ')
+assert_eq "default cap doesn't truncate small files" "10" "$count"
+
 
 # ══════════════════════════════════════════════════════════════
 # 2. session-start.sh integration tests
@@ -533,6 +565,33 @@ echo "0" > "$STATE_DIR/nudge-level"
 echo "/src/a.ts" > "$STATE_DIR/edits"
 result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"error in the log\"}")
 assert_match "\"error in the log\" triggers" "Patrol" "$result"
+
+# German keyword "Fehler" triggers
+reset_config
+reset_state "$SID"
+STATE_DIR="/tmp/patrol-${SID}"
+echo "0" > "$STATE_DIR/nudge-level"
+echo "/src/a.ts" > "$STATE_DIR/edits"
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"Da ist ein Fehler\"}")
+assert_match "German keyword \"Fehler\" triggers" "Patrol" "$result"
+
+# German phrase "funktioniert nicht" triggers
+reset_config
+reset_state "$SID"
+STATE_DIR="/tmp/patrol-${SID}"
+echo "0" > "$STATE_DIR/nudge-level"
+echo "/src/a.ts" > "$STATE_DIR/edits"
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"Das funktioniert nicht mehr\"}")
+assert_match "German phrase \"funktioniert nicht\" triggers" "Patrol" "$result"
+
+# French keyword "erreur" triggers
+reset_config
+reset_state "$SID"
+STATE_DIR="/tmp/patrol-${SID}"
+echo "0" > "$STATE_DIR/nudge-level"
+echo "/src/a.ts" > "$STATE_DIR/edits"
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"Il y a une erreur\"}")
+assert_match "French keyword \"erreur\" triggers" "Patrol" "$result"
 
 # Custom keywords from config
 reset_config
