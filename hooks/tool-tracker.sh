@@ -107,7 +107,8 @@ while IFS= read -r rule; do
 
     if [ "$violated" = "true" ]; then
       patrol_debug "violation: $rule_id ($(echo "$rule" | jq -r '.level'))"
-      echo "$rule" | jq -c '{rule_id: .id, level: .level, message: .message, tool: "'"$TOOL_NAME"'", file: "'"$FILE_PATH"'", timestamp: now}' \
+      echo "$rule" | jq -c --arg tool "$TOOL_NAME" --arg file "$FILE_PATH" \
+        '{rule_id: .id, level: .level, message: .message, tool: $tool, file: $file, timestamp: now}' \
         >> "$STATE_DIR/violations.jsonl"
     fi
   fi

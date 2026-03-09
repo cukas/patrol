@@ -1123,6 +1123,38 @@ assert_file_exists "tool-tracker tracks bash_history" "$HIST_STATE/bash_history"
 hist_content=$(cat "$HIST_STATE/bash_history" 2>/dev/null)
 assert_match "bash_history contains the command" "npm test" "$hist_content"
 
+# Test: file_changed trigger matches Edit on glob
+RULE='{"id":"t1","trigger":{"type":"file_changed","glob":"src/routes/*"}}'
+ec=0
+echo "$RULE" | run_lib patrol_check_trigger "Edit" "src/routes/api.ts" "" 2>&1 || ec=$?
+assert_exit_code "patrol_check_trigger matches file_changed" "0" "$ec"
+
+# Test: file_changed rejects Read tool
+RULE='{"id":"t1","trigger":{"type":"file_changed","glob":"src/routes/*"}}'
+ec=0
+echo "$RULE" | run_lib patrol_check_trigger "Read" "src/routes/api.ts" "" 2>/dev/null || ec=$?
+assert_exit_code "patrol_check_trigger rejects file_changed for Read tool" "1" "$ec"
+
+# Test: tool-tracker respects bash_ran require (no violation when test ran)
+reset_config
+SID3="require-test-$$"
+reset_state "$SID3"
+REQ_STATE="/tmp/patrol-${SID3}"
+cat > "$REQ_STATE/rules.json" <<'RQEOF'
+[{"id":"test-before-push","name":"Test first","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"git push"},"require":{"type":"bash_ran","match":"npm test|pnpm test"},"message":"Run tests first"}]
+RQEOF
+# First run npm test (satisfies require)
+run_hook tool-tracker.sh "{\"session_id\":\"$SID3\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"npm test\"},\"cwd\":\"$PATROL_CWD\"}"
+# Then run git push (trigger matches, but require satisfied)
+run_hook tool-tracker.sh "{\"session_id\":\"$SID3\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push origin main\"},\"cwd\":\"$PATROL_CWD\"}"
+# Should NOT have a violation for test-before-push
+if [ -f "$REQ_STATE/violations.jsonl" ]; then
+  has_violation=$(grep -c "test-before-push" "$REQ_STATE/violations.jsonl" 2>/dev/null || echo "0")
+else
+  has_violation="0"
+fi
+assert_eq "no violation when bash_ran require satisfied" "0" "$has_violation"
+
 
 # ══════════════════════════════════════════════════════════════
 # Summary

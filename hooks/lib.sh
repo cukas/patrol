@@ -493,7 +493,7 @@ patrol_check_sequence() {
   local state_dir="$1" file="$2"
   [ -z "$file" ] && return 1
   # Check if file was read in this session
-  if [ -f "$state_dir/reads" ] && grep -qF "$file" "$state_dir/reads"; then
+  if [ -f "$state_dir/reads" ] && grep -qxF "$file" "$state_dir/reads"; then
     return 1  # File was read — no violation
   fi
   # File not read but edited
