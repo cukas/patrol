@@ -1,22 +1,22 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "cukas",
-  "description": "Development discipline enforcement for Claude Code — stop band-aiding, investigate first, verify before done",
+  "description": "ESLint for Claude Code — rules, adaptive enforcement, safety",
   "owner": {
     "name": "cukas"
   },
   "plugins": [
     {
       "name": "patrol",
-      "description": "Development discipline with status line — two-tier enforcement, real-time read/edit tracking, investigation gate",
-      "version": "2.0.0",
+      "description": "ESLint for Claude Code — policy engine with adaptive enforcement, rule system, and built-in safety",
+      "version": "3.0.0",
       "author": {
         "name": "cukas"
       },
       "source": "./",
       "category": "development",
       "homepage": "https://github.com/cukas/patrol",
-      "tags": ["discipline", "investigation", "debugging", "verification", "quality", "root-cause"]
+      "tags": ["eslint", "policy", "rules", "safety", "adaptive", "enforcement", "workflow", "quality"]
     }
   ]
 }
