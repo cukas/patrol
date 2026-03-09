@@ -937,6 +937,45 @@ assert_empty "full flow: Edit x3 -> Bash verify -> no reminder" "$result"
 
 
 # ══════════════════════════════════════════════════════════════
+# 6. Rule engine tests
+# ══════════════════════════════════════════════════════════════
+printf "\n▸ Rule engine tests\n"
+
+# ── Schema & validation ──────────────────────────────────────
+printf "\n  Schema & validation:\n"
+
+# Test: valid rule passes validation
+VALID_RULE='{"id":"test-rule","name":"Test","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"git push"},"message":"Run tests first"}'
+result=$(echo "$VALID_RULE" | run_lib patrol_validate_rule 2>&1)
+ec=$?
+assert_exit_code "patrol_validate_rule accepts valid rule" "0" "$ec"
+
+# Test: rule missing required field fails
+BAD_RULE='{"name":"Test","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"git push"},"message":"msg"}'
+ec=0
+echo "$BAD_RULE" | run_lib patrol_validate_rule 2>/dev/null || ec=$?
+assert_exit_code "patrol_validate_rule rejects rule without id" "1" "$ec"
+
+# Test: rule with invalid level fails
+BAD_LEVEL='{"id":"x","name":"X","category":"workflow","level":"fatal","trigger":{"type":"bash_command","match":"x"},"message":"x"}'
+ec=0
+echo "$BAD_LEVEL" | run_lib patrol_validate_rule 2>/dev/null || ec=$?
+assert_exit_code "patrol_validate_rule rejects invalid level" "1" "$ec"
+
+# Test: rule with invalid category fails
+BAD_CAT='{"id":"x","name":"X","category":"unknown","level":"warn","trigger":{"type":"bash_command","match":"x"},"message":"x"}'
+ec=0
+echo "$BAD_CAT" | run_lib patrol_validate_rule 2>/dev/null || ec=$?
+assert_exit_code "patrol_validate_rule rejects invalid category" "1" "$ec"
+
+# Test: rule with invalid trigger type fails
+BAD_TRIGGER='{"id":"x","name":"X","category":"workflow","level":"warn","trigger":{"type":"magic","match":"x"},"message":"x"}'
+ec=0
+echo "$BAD_TRIGGER" | run_lib patrol_validate_rule 2>/dev/null || ec=$?
+assert_exit_code "patrol_validate_rule rejects invalid trigger type" "1" "$ec"
+
+
+# ══════════════════════════════════════════════════════════════
 # Summary
 # ══════════════════════════════════════════════════════════════
 printf "\n══════════════════════════════════════════\n"

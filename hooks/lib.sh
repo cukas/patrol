@@ -290,3 +290,54 @@ _patrol_ensure_statusline() {
     patrol_debug "ERROR: failed to write settings.json"
   fi
 }
+
+# ── Rule Engine ─────────────────────────────────────────────────
+
+PATROL_VALID_LEVELS='["inform","warn","block"]'
+PATROL_VALID_CATEGORIES='["safety","workflow","quality","architecture","custom"]'
+PATROL_VALID_TRIGGER_TYPES='["bash_command","tool_use","sequence","keyword","file_changed","session_event"]'
+PATROL_VALID_REQUIRE_TYPES='["bash_ran","file_read","tool_used","rule_passed","cooldown","branch_name_match"]'
+
+# Validate a single rule from stdin. Returns 0 if valid, 1 if not.
+patrol_validate_rule() {
+  local rule
+  rule=$(cat)
+
+  local id name category level trigger_type message
+  id=$(echo "$rule" | jq -r '.id // empty')
+  name=$(echo "$rule" | jq -r '.name // empty')
+  category=$(echo "$rule" | jq -r '.category // empty')
+  level=$(echo "$rule" | jq -r '.level // empty')
+  trigger_type=$(echo "$rule" | jq -r '.trigger.type // empty')
+  message=$(echo "$rule" | jq -r '.message // empty')
+
+  # Required fields
+  [ -z "$id" ] && patrol_debug "rule validation: missing id" && return 1
+  [ -z "$name" ] && patrol_debug "rule validation: missing name for $id" && return 1
+  [ -z "$category" ] && patrol_debug "rule validation: missing category for $id" && return 1
+  [ -z "$level" ] && patrol_debug "rule validation: missing level for $id" && return 1
+  [ -z "$trigger_type" ] && patrol_debug "rule validation: missing trigger.type for $id" && return 1
+  [ -z "$message" ] && patrol_debug "rule validation: missing message for $id" && return 1
+
+  # Valid enums
+  echo "$PATROL_VALID_LEVELS" | jq -e "index(\"$level\")" >/dev/null 2>&1 || {
+    patrol_debug "rule validation: invalid level '$level' for $id"; return 1
+  }
+  echo "$PATROL_VALID_CATEGORIES" | jq -e "index(\"$category\")" >/dev/null 2>&1 || {
+    patrol_debug "rule validation: invalid category '$category' for $id"; return 1
+  }
+  echo "$PATROL_VALID_TRIGGER_TYPES" | jq -e "index(\"$trigger_type\")" >/dev/null 2>&1 || {
+    patrol_debug "rule validation: invalid trigger type '$trigger_type' for $id"; return 1
+  }
+
+  # Validate require type if present
+  local require_type
+  require_type=$(echo "$rule" | jq -r '.require.type // empty')
+  if [ -n "$require_type" ]; then
+    echo "$PATROL_VALID_REQUIRE_TYPES" | jq -e "index(\"$require_type\")" >/dev/null 2>&1 || {
+      patrol_debug "rule validation: invalid require type '$require_type' for $id"; return 1
+    }
+  fi
+
+  return 0
+}
