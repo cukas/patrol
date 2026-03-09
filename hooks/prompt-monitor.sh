@@ -102,6 +102,61 @@ fi
 
 patrol_debug "edits=$EDIT_COUNT reads=$READ_COUNT unread_edits=$UNREAD_EDIT_COUNT nudge=$NUDGE_LEVEL"
 
+# ─── Check 0: V3 Rule violations ──────────────────────────────
+# Process violations written by tool-tracker's rule evaluation
+VIOLATIONS_FILE="$STATE_DIR/violations.jsonl"
+if [ -f "$VIOLATIONS_FILE" ] && [ -s "$VIOLATIONS_FILE" ]; then
+  # Read violations and group by level
+  BLOCK_MSGS=""
+  WARN_MSGS=""
+  INFORM_MSGS=""
+
+  while IFS= read -r violation; do
+    v_level=$(echo "$violation" | jq -r '.level // empty')
+    v_message=$(echo "$violation" | jq -r '.message // empty')
+    v_rule_id=$(echo "$violation" | jq -r '.rule_id // empty')
+    [ -z "$v_level" ] || [ -z "$v_message" ] && continue
+
+    case "$v_level" in
+      block)
+        BLOCK_MSGS="${BLOCK_MSGS}🚫 [${v_rule_id}] ${v_message}\n"
+        ;;
+      warn)
+        WARN_MSGS="${WARN_MSGS}⚠️ [${v_rule_id}] ${v_message}\n"
+        ;;
+      inform)
+        INFORM_MSGS="${INFORM_MSGS}ℹ️ [${v_rule_id}] ${v_message}\n"
+        ;;
+    esac
+  done < "$VIOLATIONS_FILE"
+
+  # Clear violations after processing
+  > "$VIOLATIONS_FILE"
+
+  # Build output message (block first, then warn, then inform)
+  OUTPUT_MSG=""
+  if [ -n "$BLOCK_MSGS" ]; then
+    OUTPUT_MSG="${OUTPUT_MSG}🚨 PATROL BLOCKED:\n${BLOCK_MSGS}"
+  fi
+  if [ -n "$WARN_MSGS" ]; then
+    OUTPUT_MSG="${OUTPUT_MSG}🟡 PATROL WARNING:\n${WARN_MSGS}"
+  fi
+  if [ -n "$INFORM_MSGS" ]; then
+    OUTPUT_MSG="${OUTPUT_MSG}${INFORM_MSGS}"
+  fi
+
+  if [ -n "$OUTPUT_MSG" ]; then
+    # Format as additionalContext
+    ESCAPED_MSG=$(patrol_escape_json "$(printf '%b' "$OUTPUT_MSG")")
+    cat <<EOF
+{
+  "additionalContext": "${ESCAPED_MSG}"
+}
+EOF
+    exit 0
+  fi
+fi
+
 # ─── Check 1: Investigation gate ─────────────────────────────
 if [ "$TIER" = "full" ] || [ "$TIER" = "light" ]; then
   THRESHOLD=$(patrol_config "band_aid_threshold" "3")

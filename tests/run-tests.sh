@@ -1155,6 +1155,59 @@ else
 fi
 assert_eq "no violation when bash_ran require satisfied" "0" "$has_violation"
 
+# ── Violation enforcement ────────────────────────────────────
+printf "\n  Violation enforcement:\n"
+
+# Test: inform level outputs message
+ENF_SID="enforce-$$"
+reset_config
+reset_state "$ENF_SID"
+ENF_STATE="/tmp/patrol-${ENF_SID}"
+echo '{"rule_id":"r1","level":"inform","message":"FYI: use pnpm","timestamp":1}' > "$ENF_STATE/violations.jsonl"
+echo "0" > "$ENF_STATE/nudge-level"
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$ENF_SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"do something\"}")
+assert_match "prompt-monitor outputs inform violations" "FYI: use pnpm" "$result"
+
+# Test: block level outputs block message
+reset_config
+reset_state "$ENF_SID"
+ENF_STATE="/tmp/patrol-${ENF_SID}"
+echo '{"rule_id":"r1","level":"block","message":"Cannot force push","timestamp":1}' > "$ENF_STATE/violations.jsonl"
+echo "0" > "$ENF_STATE/nudge-level"
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$ENF_SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"push it\"}")
+assert_match "prompt-monitor outputs block violations" "BLOCKED" "$result"
+assert_match "prompt-monitor shows block message" "Cannot force push" "$result"
+
+# Test: warn level outputs warning
+reset_config
+reset_state "$ENF_SID"
+ENF_STATE="/tmp/patrol-${ENF_SID}"
+echo '{"rule_id":"r1","level":"warn","message":"Run tests first","timestamp":1}' > "$ENF_STATE/violations.jsonl"
+echo "0" > "$ENF_STATE/nudge-level"
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$ENF_SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"push\"}")
+assert_match "prompt-monitor outputs warn violations" "WARNING" "$result"
+assert_match "prompt-monitor shows warn message" "Run tests first" "$result"
+
+# Test: violations cleared after processing
+reset_config
+reset_state "$ENF_SID"
+ENF_STATE="/tmp/patrol-${ENF_SID}"
+echo '{"rule_id":"r1","level":"inform","message":"msg","timestamp":1}' > "$ENF_STATE/violations.jsonl"
+echo "0" > "$ENF_STATE/nudge-level"
+run_hook prompt-monitor.sh "{\"session_id\":\"$ENF_SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"ok\"}" >/dev/null
+violations_content=$(cat "$ENF_STATE/violations.jsonl" 2>/dev/null)
+assert_empty "violations file cleared after enforcement" "$violations_content"
+
+# Test: no violations = falls through to v2 checks (existing behavior preserved)
+reset_config
+reset_state "$ENF_SID"
+ENF_STATE="/tmp/patrol-${ENF_SID}"
+echo "0" > "$ENF_STATE/nudge-level"
+echo "/src/a.ts" > "$ENF_STATE/edits"
+# No violations.jsonl — should fall through to v2 investigation gate
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$ENF_SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"fix the bug\"}")
+assert_match "v2 investigation gate still works when no violations" "edited without being read" "$result"
+
 
 # ══════════════════════════════════════════════════════════════
 # Summary
