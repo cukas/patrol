@@ -20,9 +20,10 @@ ENABLED=$(patrol_config "enabled" "true")
 [ "$ENABLED" = "false" ] && exit 0
 
 # Reset state for this session
+RULE_COUNT=0
 if [ -n "$SESSION_ID" ]; then
   STATE_DIR=$(patrol_state_dir "$SESSION_ID")
-  rm -f "$STATE_DIR/reads" "$STATE_DIR/edits" "$STATE_DIR/verified" "$STATE_DIR/nudge-level" "$STATE_DIR/verify-nudged" 2>/dev/null
+  rm -f "$STATE_DIR/reads" "$STATE_DIR/edits" "$STATE_DIR/verified" "$STATE_DIR/nudge-level" "$STATE_DIR/verify-nudged" "$STATE_DIR/violations.jsonl" "$STATE_DIR/bash_history" 2>/dev/null
   echo "0" > "$STATE_DIR/nudge-level"
 
   # Write initial tier based on always_on config
@@ -32,6 +33,15 @@ if [ -n "$SESSION_ID" ]; then
   else
     echo "off" > "$STATE_DIR/tier"
   fi
+
+  # V3: Load and cache merged rules
+  RULES=$(patrol_load_all_rules 2>/dev/null) || RULES="[]"
+  echo "$RULES" > "$STATE_DIR/rules.json"
+  RULE_COUNT=$(echo "$RULES" | jq 'length' 2>/dev/null || echo "0")
+  patrol_debug "loaded $RULE_COUNT rules to cache"
+
+  # Also clear v3 state files on reset
+  rm -f "$STATE_DIR/violations.jsonl" "$STATE_DIR/bash_history" 2>/dev/null
 
   # Preserve manual mode across clear/compact, reset on fresh startup
   if [ "$SOURCE" = "startup" ]; then
@@ -44,7 +54,11 @@ if [ "$SOURCE" = "startup" ]; then
   _patrol_ensure_statusline
 fi
 
-INTRO="🛡️ Patrol active · /patrol-help for commands"
+if [ "$RULE_COUNT" -gt 0 ] 2>/dev/null; then
+  INTRO="🛡️ Patrol active · ${RULE_COUNT} rules loaded · /patrol-help for commands"
+else
+  INTRO="🛡️ Patrol active · /patrol-help for commands"
+fi
 
 cat <<EOF
 {

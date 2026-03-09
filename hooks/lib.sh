@@ -290,3 +290,220 @@ _patrol_ensure_statusline() {
     patrol_debug "ERROR: failed to write settings.json"
   fi
 }
+
+# ── Rule Engine ─────────────────────────────────────────────────
+
+PATROL_VALID_LEVELS='["inform","warn","block"]'
+PATROL_VALID_CATEGORIES='["safety","workflow","quality","architecture","custom"]'
+PATROL_VALID_TRIGGER_TYPES='["bash_command","tool_use","sequence","keyword","file_changed","session_event"]'
+PATROL_VALID_REQUIRE_TYPES='["bash_ran","file_read","tool_used","rule_passed","cooldown","branch_name_match"]'
+
+# Validate a single rule from stdin. Returns 0 if valid, 1 if not.
+patrol_validate_rule() {
+  local rule
+  rule=$(cat)
+
+  # Extract all fields in a single jq call (also catches invalid JSON)
+  local fields
+  fields=$(echo "$rule" | jq -r '[.id // "", .name // "", .category // "", .level // "", (.trigger.type // ""), .message // "", (.require.type // "")] | @tsv') || {
+    patrol_debug "rule validation: invalid JSON"; return 1
+  }
+  local id name category level trigger_type message require_type
+  IFS=$'\t' read -r id name category level trigger_type message require_type <<< "$fields"
+
+  # Required fields
+  [ -z "$id" ] && patrol_debug "rule validation: missing id" && return 1
+  [ -z "$name" ] && patrol_debug "rule validation: missing name for $id" && return 1
+  [ -z "$category" ] && patrol_debug "rule validation: missing category for $id" && return 1
+  [ -z "$level" ] && patrol_debug "rule validation: missing level for $id" && return 1
+  [ -z "$trigger_type" ] && patrol_debug "rule validation: missing trigger.type for $id" && return 1
+  [ -z "$message" ] && patrol_debug "rule validation: missing message for $id" && return 1
+
+  # Valid enums (use --arg to prevent jq expression injection)
+  echo "$PATROL_VALID_LEVELS" | jq -e --arg v "$level" 'index($v)' >/dev/null 2>&1 || {
+    patrol_debug "rule validation: invalid level '$level' for $id"; return 1
+  }
+  echo "$PATROL_VALID_CATEGORIES" | jq -e --arg v "$category" 'index($v)' >/dev/null 2>&1 || {
+    patrol_debug "rule validation: invalid category '$category' for $id"; return 1
+  }
+  echo "$PATROL_VALID_TRIGGER_TYPES" | jq -e --arg v "$trigger_type" 'index($v)' >/dev/null 2>&1 || {
+    patrol_debug "rule validation: invalid trigger type '$trigger_type' for $id"; return 1
+  }
+
+  # Validate require type if present
+  if [ -n "$require_type" ]; then
+    echo "$PATROL_VALID_REQUIRE_TYPES" | jq -e --arg v "$require_type" 'index($v)' >/dev/null 2>&1 || {
+      patrol_debug "rule validation: invalid require type '$require_type' for $id"; return 1
+    }
+  fi
+
+  return 0
+}
+
+# Load rules array from a rules.json file. Returns JSON array.
+patrol_load_rules() {
+  local file="$1"
+  [ ! -f "$file" ] && echo "[]" && return 0
+  local rules
+  rules=$(jq -r '.rules // []' "$file" 2>/dev/null) || { echo "[]"; return 0; }
+  # Validate each rule, filter out invalid ones
+  local valid_ndjson=""
+  while IFS= read -r rule; do
+    if echo "$rule" | patrol_validate_rule 2>/dev/null; then
+      # Skip rules with enabled: false
+      local is_enabled
+      is_enabled=$(echo "$rule" | jq -r 'if has("enabled") then .enabled else true end')
+      if [ "$is_enabled" = "false" ]; then
+        patrol_debug "skipping disabled rule: $(echo "$rule" | jq -r '.id')"
+        continue
+      fi
+      valid_ndjson="${valid_ndjson}${rule}"$'\n'
+    else
+      patrol_debug "skipping invalid rule: $(echo "$rule" | jq -r '.id // "unknown"')"
+    fi
+  done < <(echo "$rules" | jq -c '.[]')
+  if [ -n "$valid_ndjson" ]; then
+    echo "$valid_ndjson" | jq -s '.'
+  else
+    echo "[]"
+  fi
+}
+
+# Merge three layers of rules. Returns merged JSON array.
+# Company (base) <- Repo (overrides) <- Personal (extends, cannot weaken)
+patrol_merge_rules() {
+  local company="${1:-[]}" repo="${2:-[]}" personal="${3:-[]}"
+
+  # Level strength for comparison
+  local level_order='{"inform":1,"warn":2,"block":3}'
+
+  # Start with company rules
+  local merged="$company"
+
+  # Repo overrides company (can strengthen or weaken)
+  merged=$(jq -n --argjson base "$merged" --argjson overlay "$repo" '
+    ($base | map({key: .id, value: .}) | from_entries) as $base_map |
+    ($overlay | map({key: .id, value: .}) | from_entries) as $overlay_map |
+    ($base_map + $overlay_map) | to_entries | map(.value)
+  ')
+
+  # Personal extends but cannot weaken (level must be >= existing)
+  merged=$(jq -n --argjson base "$merged" --argjson overlay "$personal" --argjson levels "$level_order" '
+    ($base | map({key: .id, value: .}) | from_entries) as $base_map |
+    reduce ($overlay | .[]) as $rule ($base_map;
+      if .[$rule.id] then
+        # Rule exists — only override if personal level is >= base level
+        if ($levels[$rule.level] // 0) >= ($levels[.[$rule.id].level] // 0)
+        then . + {($rule.id): $rule}
+        else .
+        end
+      else
+        # New rule — add it
+        . + {($rule.id): $rule}
+      end
+    ) | to_entries | map(.value)
+  ')
+
+  echo "$merged"
+}
+
+# Load all rules from all layers + built-in safety. Returns merged JSON array.
+patrol_load_all_rules() {
+  local company_file="${PATROL_COMPANY_RULES:-$HOME/.patrol/company.json}"
+  local repo_file="${PATROL_REPO_RULES:-${PATROL_CWD:-.}/.patrol/rules.json}"
+  local personal_file="${PATROL_PERSONAL_RULES:-$HOME/.patrol/my-rules.json}"
+
+  local company repo personal safety
+  company=$(patrol_load_rules "$company_file")
+  repo=$(patrol_load_rules "$repo_file")
+  personal=$(patrol_load_rules "$personal_file")
+
+  # Built-in safety rules (from templates dir relative to script, validated)
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local safety_file="$script_dir/../templates/safety-rules.json"
+  safety=$(patrol_load_rules "$safety_file")
+
+  # Built-in investigation rules (v2 behavior as templates)
+  local investigation_file="$script_dir/../templates/investigation-rules.json"
+  local investigation
+  investigation=$(patrol_load_rules "$investigation_file")
+
+  # Merge: safety (base) <- investigation <- company <- repo <- personal
+  local merged
+  merged=$(patrol_merge_rules "$safety" "$investigation" "[]")
+  merged=$(patrol_merge_rules "$merged" "$company" "[]")
+  merged=$(patrol_merge_rules "$merged" "$repo" "[]")
+  merged=$(patrol_merge_rules "$merged" "[]" "$personal")
+
+  # Safety rules always win — re-inject to prevent any layer from weakening them
+  merged=$(jq -n --argjson base "$merged" --argjson safety "$safety" '
+    ($base | map({key: .id, value: .}) | from_entries) as $base_map |
+    ($safety | map({key: .id, value: .}) | from_entries) as $safety_map |
+    ($base_map + $safety_map) | to_entries | map(.value)
+  ')
+
+  echo "$merged"
+}
+
+# Check if a rule's trigger matches the current tool use.
+# Args: tool_name, file_path, bash_command
+# Rule from stdin. Returns 0 if triggered, 1 if not.
+patrol_check_trigger() {
+  local tool="$1" file="$2" command="$3"
+  local rule
+  rule=$(cat)
+
+  local trigger_type trigger_match trigger_tool trigger_glob
+  trigger_type=$(echo "$rule" | jq -r '.trigger.type')
+  trigger_match=$(echo "$rule" | jq -r '.trigger.match // empty')
+  trigger_tool=$(echo "$rule" | jq -r '.trigger.tool // empty')
+  trigger_glob=$(echo "$rule" | jq -r '.trigger.glob // empty')
+
+  case "$trigger_type" in
+    bash_command)
+      [ "$tool" = "Bash" ] || return 1
+      [ -z "$trigger_match" ] && return 1
+      echo "$command" | grep -qE "$trigger_match" && return 0
+      return 1
+      ;;
+    tool_use)
+      [ -n "$trigger_tool" ] && [ "$tool" != "$trigger_tool" ] && return 1
+      if [ -n "$trigger_glob" ] && [ -n "$file" ]; then
+        # Simple glob match using bash pattern
+        case "$file" in
+          $trigger_glob) return 0 ;;
+          *) return 1 ;;
+        esac
+      fi
+      [ "$tool" = "$trigger_tool" ] && return 0
+      return 1
+      ;;
+    file_changed)
+      [ -z "$file" ] && return 1
+      [ -z "$trigger_glob" ] && return 1
+      case "$tool" in Edit|Write|MultiEdit) ;; *) return 1 ;; esac
+      case "$file" in
+        $trigger_glob) return 0 ;;
+        *) return 1 ;;
+      esac
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# Check sequence rules (edit-without-read).
+# Args: state_dir, file_path
+# Returns 0 if file was edited but not read (i.e., violation detected).
+patrol_check_sequence() {
+  local state_dir="$1" file="$2"
+  [ -z "$file" ] && return 1
+  # Check if file was read in this session
+  if [ -f "$state_dir/reads" ] && grep -qxF "$file" "$state_dir/reads"; then
+    return 1  # File was read — no violation
+  fi
+  # File not read but edited
+  return 0
+}

@@ -937,6 +937,466 @@ assert_empty "full flow: Edit x3 -> Bash verify -> no reminder" "$result"
 
 
 # ══════════════════════════════════════════════════════════════
+# 6. Rule engine tests
+# ══════════════════════════════════════════════════════════════
+printf "\n▸ Rule engine tests\n"
+
+# ── Schema & validation ──────────────────────────────────────
+printf "\n  Schema & validation:\n"
+
+# Test: valid rule passes validation
+VALID_RULE='{"id":"test-rule","name":"Test","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"git push"},"message":"Run tests first"}'
+result=$(echo "$VALID_RULE" | run_lib patrol_validate_rule 2>&1)
+ec=$?
+assert_exit_code "patrol_validate_rule accepts valid rule" "0" "$ec"
+
+# Test: rule missing required field fails
+BAD_RULE='{"name":"Test","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"git push"},"message":"msg"}'
+ec=0
+echo "$BAD_RULE" | run_lib patrol_validate_rule 2>/dev/null || ec=$?
+assert_exit_code "patrol_validate_rule rejects rule without id" "1" "$ec"
+
+# Test: rule with invalid level fails
+BAD_LEVEL='{"id":"x","name":"X","category":"workflow","level":"fatal","trigger":{"type":"bash_command","match":"x"},"message":"x"}'
+ec=0
+echo "$BAD_LEVEL" | run_lib patrol_validate_rule 2>/dev/null || ec=$?
+assert_exit_code "patrol_validate_rule rejects invalid level" "1" "$ec"
+
+# Test: rule with invalid category fails
+BAD_CAT='{"id":"x","name":"X","category":"unknown","level":"warn","trigger":{"type":"bash_command","match":"x"},"message":"x"}'
+ec=0
+echo "$BAD_CAT" | run_lib patrol_validate_rule 2>/dev/null || ec=$?
+assert_exit_code "patrol_validate_rule rejects invalid category" "1" "$ec"
+
+# Test: rule with invalid trigger type fails
+BAD_TRIGGER='{"id":"x","name":"X","category":"workflow","level":"warn","trigger":{"type":"magic","match":"x"},"message":"x"}'
+ec=0
+echo "$BAD_TRIGGER" | run_lib patrol_validate_rule 2>/dev/null || ec=$?
+assert_exit_code "patrol_validate_rule rejects invalid trigger type" "1" "$ec"
+
+# Test: rule with invalid require type fails
+BAD_REQUIRE='{"id":"x","name":"X","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"x"},"require":{"type":"magic"},"message":"x"}'
+ec=0
+echo "$BAD_REQUIRE" | run_lib patrol_validate_rule 2>/dev/null || ec=$?
+assert_exit_code "patrol_validate_rule rejects invalid require type" "1" "$ec"
+
+# ── Loading & merging ────────────────────────────────────────
+printf "\n  Loading & merging:\n"
+
+# Test: load rules from single file
+RULES_FILE="$TMPDIR_ROOT/rules-load-test.json"
+cat > "$RULES_FILE" <<'REOF'
+{
+  "version": "3.0",
+  "rules": [
+    {"id":"test-rule","name":"Test","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"git push"},"message":"msg"}
+  ]
+}
+REOF
+result=$(run_lib patrol_load_rules "$RULES_FILE")
+count=$(echo "$result" | jq 'length')
+assert_eq "patrol_load_rules reads rules from file" "1" "$count"
+
+# Test: load from nonexistent file returns empty array
+result=$(run_lib patrol_load_rules "/nonexistent/path.json")
+assert_eq "patrol_load_rules returns [] for missing file" "[]" "$result"
+
+# Test: merge prioritizes repo over company
+COMPANY='[{"id":"r1","name":"R1","category":"safety","level":"inform","trigger":{"type":"bash_command","match":"x"},"message":"company"}]'
+REPO='[{"id":"r1","name":"R1","category":"safety","level":"block","trigger":{"type":"bash_command","match":"x"},"message":"repo"}]'
+merged=$(run_lib patrol_merge_rules "$COMPANY" "$REPO" "[]")
+level=$(echo "$merged" | jq -r '.[0].level')
+assert_eq "patrol_merge_rules repo overrides company level" "block" "$level"
+
+# Test: personal rules can add but not weaken
+REPO='[{"id":"r1","name":"R1","category":"safety","level":"block","trigger":{"type":"bash_command","match":"x"},"message":"repo"}]'
+PERSONAL='[{"id":"r1","name":"R1","category":"safety","level":"inform","trigger":{"type":"bash_command","match":"x"},"message":"weak"}]'
+merged=$(run_lib patrol_merge_rules "[]" "$REPO" "$PERSONAL")
+level=$(echo "$merged" | jq -r '.[] | select(.id=="r1") | .level')
+assert_eq "patrol_merge_rules personal cannot weaken repo" "block" "$level"
+
+# Test: personal rules can add new rules
+REPO='[{"id":"r1","name":"R1","category":"safety","level":"warn","trigger":{"type":"bash_command","match":"x"},"message":"repo"}]'
+PERSONAL='[{"id":"r2","name":"R2","category":"custom","level":"inform","trigger":{"type":"keyword","match":["todo"]},"message":"personal"}]'
+merged=$(run_lib patrol_merge_rules "[]" "$REPO" "$PERSONAL")
+count=$(echo "$merged" | jq 'length')
+assert_eq "patrol_merge_rules personal can add new rules" "2" "$count"
+
+# Test: safety rules always injected
+PATROL_COMPANY_RULES="" PATROL_REPO_RULES="" PATROL_PERSONAL_RULES=""
+result=$(run_lib patrol_load_all_rules)
+has_safety=$(echo "$result" | jq '[.[] | select(.id | startswith("_safety-"))] | length')
+assert_match "patrol_load_all_rules includes built-in safety rules" "^[1-9]" "$has_safety"
+
+# Test: safety rules cannot be weakened by repo
+REPO_WEAK='[{"id":"_safety-force-push-main","name":"Weakened","category":"safety","level":"inform","trigger":{"type":"bash_command","match":"git push"},"message":"weakened"}]'
+# Create a temp rules file for repo
+WEAK_FILE="$TMPDIR_ROOT/weak-rules.json"
+echo "{\"version\":\"3.0\",\"rules\":$(echo "$REPO_WEAK")}" > "$WEAK_FILE"
+result=$(PATROL_COMPANY_RULES="/nonexistent" PATROL_REPO_RULES="$WEAK_FILE" PATROL_PERSONAL_RULES="/nonexistent" run_lib patrol_load_all_rules)
+level=$(echo "$result" | jq -r '.[] | select(.id=="_safety-force-push-main") | .level')
+assert_eq "safety rules cannot be weakened by repo" "block" "$level"
+
+# Test: enabled:false rules are filtered out
+DISABLED_FILE="$TMPDIR_ROOT/rules-disabled-test.json"
+cat > "$DISABLED_FILE" <<'DEOF'
+{
+  "version": "3.0",
+  "rules": [
+    {"id":"active-rule","name":"Active","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"x"},"message":"active"},
+    {"id":"disabled-rule","name":"Disabled","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"y"},"message":"disabled","enabled":false}
+  ]
+}
+DEOF
+result=$(run_lib patrol_load_rules "$DISABLED_FILE")
+count=$(echo "$result" | jq 'length')
+assert_eq "patrol_load_rules filters out enabled:false rules" "1" "$count"
+has_disabled=$(echo "$result" | jq '[.[] | select(.id=="disabled-rule")] | length')
+assert_eq "patrol_load_rules excludes disabled rule" "0" "$has_disabled"
+
+
+# ── Trigger evaluation ───────────────────────────────────────
+printf "\n  Trigger evaluation:\n"
+
+# Test: bash_command trigger matches
+RULE='{"id":"t1","trigger":{"type":"bash_command","match":"git push"}}'
+result=$(echo "$RULE" | run_lib patrol_check_trigger "Bash" "" "git push origin main" 2>&1)
+ec=$?
+assert_exit_code "patrol_check_trigger matches bash_command" "0" "$ec"
+
+# Test: bash_command trigger doesn't match
+RULE='{"id":"t1","trigger":{"type":"bash_command","match":"git push"}}'
+ec=0
+echo "$RULE" | run_lib patrol_check_trigger "Bash" "" "npm test" 2>/dev/null || ec=$?
+assert_exit_code "patrol_check_trigger rejects non-matching bash" "1" "$ec"
+
+# Test: bash_command trigger doesn't match non-Bash tool
+RULE='{"id":"t1","trigger":{"type":"bash_command","match":"git push"}}'
+ec=0
+echo "$RULE" | run_lib patrol_check_trigger "Read" "" "git push" 2>/dev/null || ec=$?
+assert_exit_code "patrol_check_trigger rejects bash_command for non-Bash tool" "1" "$ec"
+
+# Test: tool_use trigger matches
+RULE='{"id":"t1","trigger":{"type":"tool_use","tool":"Edit","glob":"src/routes/**"}}'
+ec=0
+echo "$RULE" | run_lib patrol_check_trigger "Edit" "src/routes/api.ts" "" 2>&1 || ec=$?
+assert_exit_code "patrol_check_trigger matches tool_use with glob" "0" "$ec"
+
+# Test: sequence — edit without read
+SEQ_STATE="$TMPDIR_ROOT/seq-state"
+mkdir -p "$SEQ_STATE"
+echo "src/other.ts" > "$SEQ_STATE/reads"
+run_lib patrol_check_sequence "$SEQ_STATE" "src/target.ts"
+ec=$?
+assert_exit_code "patrol_check_sequence detects edit-without-read" "0" "$ec"
+
+# Test: sequence — edit after read
+SEQ_STATE2="$TMPDIR_ROOT/seq-state2"
+mkdir -p "$SEQ_STATE2"
+echo "src/target.ts" > "$SEQ_STATE2/reads"
+ec=0
+run_lib patrol_check_sequence "$SEQ_STATE2" "src/target.ts" || ec=$?
+assert_exit_code "patrol_check_sequence allows edit-after-read" "1" "$ec"
+
+# Test: tool-tracker writes violations
+reset_config
+SID="trigger-test-$$"
+reset_state "$SID"
+TRIGGER_STATE="/tmp/patrol-${SID}"
+# Set up cached rules with a bash_command rule (no require = always violates on match)
+cat > "$TRIGGER_STATE/rules.json" <<'TEOF'
+[{"id":"no-force-push","name":"No force push","category":"safety","level":"block","trigger":{"type":"bash_command","match":"git push.*--force"},"message":"No force push allowed"}]
+TEOF
+# Simulate: Bash git push --force
+run_hook tool-tracker.sh "{\"session_id\":\"$SID\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push --force origin main\"},\"cwd\":\"$PATROL_CWD\"}"
+assert_file_exists "tool-tracker writes violation on trigger match" "$TRIGGER_STATE/violations.jsonl"
+violation_rule=$(jq -r '.rule_id' "$TRIGGER_STATE/violations.jsonl" 2>/dev/null | head -1)
+assert_eq "violation has correct rule_id" "no-force-push" "$violation_rule"
+
+# Test: tool-tracker tracks bash history
+reset_config
+SID2="bash-hist-$$"
+reset_state "$SID2"
+HIST_STATE="/tmp/patrol-${SID2}"
+run_hook tool-tracker.sh "{\"session_id\":\"$SID2\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"npm test\"},\"cwd\":\"$PATROL_CWD\"}"
+assert_file_exists "tool-tracker tracks bash_history" "$HIST_STATE/bash_history"
+hist_content=$(cat "$HIST_STATE/bash_history" 2>/dev/null)
+assert_match "bash_history contains the command" "npm test" "$hist_content"
+
+# Test: file_changed trigger matches Edit on glob
+RULE='{"id":"t1","trigger":{"type":"file_changed","glob":"src/routes/*"}}'
+ec=0
+echo "$RULE" | run_lib patrol_check_trigger "Edit" "src/routes/api.ts" "" 2>&1 || ec=$?
+assert_exit_code "patrol_check_trigger matches file_changed" "0" "$ec"
+
+# Test: file_changed rejects Read tool
+RULE='{"id":"t1","trigger":{"type":"file_changed","glob":"src/routes/*"}}'
+ec=0
+echo "$RULE" | run_lib patrol_check_trigger "Read" "src/routes/api.ts" "" 2>/dev/null || ec=$?
+assert_exit_code "patrol_check_trigger rejects file_changed for Read tool" "1" "$ec"
+
+# Test: tool-tracker respects bash_ran require (no violation when test ran)
+reset_config
+SID3="require-test-$$"
+reset_state "$SID3"
+REQ_STATE="/tmp/patrol-${SID3}"
+cat > "$REQ_STATE/rules.json" <<'RQEOF'
+[{"id":"test-before-push","name":"Test first","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"git push"},"require":{"type":"bash_ran","match":"npm test|pnpm test"},"message":"Run tests first"}]
+RQEOF
+# First run npm test (satisfies require)
+run_hook tool-tracker.sh "{\"session_id\":\"$SID3\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"npm test\"},\"cwd\":\"$PATROL_CWD\"}"
+# Then run git push (trigger matches, but require satisfied)
+run_hook tool-tracker.sh "{\"session_id\":\"$SID3\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push origin main\"},\"cwd\":\"$PATROL_CWD\"}"
+# Should NOT have a violation for test-before-push
+if [ -f "$REQ_STATE/violations.jsonl" ]; then
+  has_violation=$(grep -c "test-before-push" "$REQ_STATE/violations.jsonl" 2>/dev/null || echo "0")
+else
+  has_violation="0"
+fi
+assert_eq "no violation when bash_ran require satisfied" "0" "$has_violation"
+
+# ── Violation enforcement ────────────────────────────────────
+printf "\n  Violation enforcement:\n"
+
+# Test: inform level outputs message
+ENF_SID="enforce-$$"
+reset_config
+reset_state "$ENF_SID"
+ENF_STATE="/tmp/patrol-${ENF_SID}"
+echo '{"rule_id":"r1","level":"inform","message":"FYI: use pnpm","timestamp":1}' > "$ENF_STATE/violations.jsonl"
+echo "0" > "$ENF_STATE/nudge-level"
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$ENF_SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"do something\"}")
+assert_match "prompt-monitor outputs inform violations" "FYI: use pnpm" "$result"
+
+# Test: block level outputs block message
+reset_config
+reset_state "$ENF_SID"
+ENF_STATE="/tmp/patrol-${ENF_SID}"
+echo '{"rule_id":"r1","level":"block","message":"Cannot force push","timestamp":1}' > "$ENF_STATE/violations.jsonl"
+echo "0" > "$ENF_STATE/nudge-level"
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$ENF_SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"push it\"}")
+assert_match "prompt-monitor outputs block violations" "BLOCKED" "$result"
+assert_match "prompt-monitor shows block message" "Cannot force push" "$result"
+
+# Test: warn level outputs warning
+reset_config
+reset_state "$ENF_SID"
+ENF_STATE="/tmp/patrol-${ENF_SID}"
+echo '{"rule_id":"r1","level":"warn","message":"Run tests first","timestamp":1}' > "$ENF_STATE/violations.jsonl"
+echo "0" > "$ENF_STATE/nudge-level"
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$ENF_SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"push\"}")
+assert_match "prompt-monitor outputs warn violations" "WARNING" "$result"
+assert_match "prompt-monitor shows warn message" "Run tests first" "$result"
+
+# Test: violations cleared after processing
+reset_config
+reset_state "$ENF_SID"
+ENF_STATE="/tmp/patrol-${ENF_SID}"
+echo '{"rule_id":"r1","level":"inform","message":"msg","timestamp":1}' > "$ENF_STATE/violations.jsonl"
+echo "0" > "$ENF_STATE/nudge-level"
+run_hook prompt-monitor.sh "{\"session_id\":\"$ENF_SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"ok\"}" >/dev/null
+violations_content=$(cat "$ENF_STATE/violations.jsonl" 2>/dev/null)
+assert_empty "violations file cleared after enforcement" "$violations_content"
+
+# Test: no violations = falls through to v2 checks (existing behavior preserved)
+reset_config
+reset_state "$ENF_SID"
+ENF_STATE="/tmp/patrol-${ENF_SID}"
+echo "0" > "$ENF_STATE/nudge-level"
+echo "/src/a.ts" > "$ENF_STATE/edits"
+# No violations.jsonl — should fall through to v2 investigation gate
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$ENF_SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"fix the bug\"}")
+assert_match "v2 investigation gate still works when no violations" "edited without being read" "$result"
+
+
+# ── Session start rule loading ───────────────────────────────
+printf "\n  Session start rule loading:\n"
+
+# Test: session-start caches merged rules to state dir
+SS_SID="ss-rules-$$"
+reset_config
+reset_state "$SS_SID"
+SS_STATE="/tmp/patrol-${SS_SID}"
+# Create a repo rules file
+mkdir -p "$PATROL_CWD/.patrol"
+cat > "$PATROL_CWD/.patrol/rules.json" <<'SSEOF'
+{"version":"3.0","rules":[{"id":"test-r","name":"T","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"git push"},"message":"m"}]}
+SSEOF
+run_hook session-start.sh "{\"session_id\":\"$SS_SID\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+assert_file_exists "session-start caches rules.json" "$SS_STATE/rules.json"
+count=$(jq 'length' "$SS_STATE/rules.json" 2>/dev/null || echo "0")
+assert_match "cached rules include repo + safety rules" "^[1-9]" "$count"
+
+# Test: rules.json includes safety rules even without repo rules
+SS_SID2="ss-safety-$$"
+reset_config
+reset_state "$SS_SID2"
+SS_STATE2="/tmp/patrol-${SS_SID2}"
+rm -f "$PATROL_CWD/.patrol/rules.json" 2>/dev/null
+run_hook session-start.sh "{\"session_id\":\"$SS_SID2\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+assert_file_exists "rules.json exists even without repo rules" "$SS_STATE2/rules.json"
+safety_count=$(jq '[.[] | select(.id | startswith("_safety-"))] | length' "$SS_STATE2/rules.json" 2>/dev/null || echo "0")
+assert_match "safety rules cached by default" "^[1-9]" "$safety_count"
+
+# Test: violations and bash_history cleared on session start
+SS_SID3="ss-clear-$$"
+reset_config
+reset_state "$SS_SID3"
+SS_STATE3="/tmp/patrol-${SS_SID3}"
+echo '{"rule_id":"old","level":"warn","message":"stale"}' > "$SS_STATE3/violations.jsonl"
+echo "old command" > "$SS_STATE3/bash_history"
+run_hook session-start.sh "{\"session_id\":\"$SS_SID3\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+assert_file_not_exists "violations cleared on session start" "$SS_STATE3/violations.jsonl"
+assert_file_not_exists "bash_history cleared on session start" "$SS_STATE3/bash_history"
+
+# Test: banner shows rule count
+SS_SID4="ss-banner-$$"
+reset_config
+reset_state "$SS_SID4"
+cat > "$PATROL_CWD/.patrol/rules.json" <<'SSEOF2'
+{"version":"3.0","rules":[{"id":"test-r","name":"T","category":"workflow","level":"warn","trigger":{"type":"bash_command","match":"x"},"message":"m"}]}
+SSEOF2
+result=$(run_hook session-start.sh "{\"session_id\":\"$SS_SID4\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}")
+assert_match "banner shows rule count" "rules loaded" "$result"
+# Clean up
+rm -f "$PATROL_CWD/.patrol/rules.json" 2>/dev/null
+
+
+# ── V2 migration as rule templates ───────────────────────────
+printf "\n  V2 migration as rule templates:\n"
+
+# Test: investigation rules loaded by default
+MIG_SID="migrate-$$"
+reset_config
+reset_state "$MIG_SID"
+MIG_STATE="/tmp/patrol-${MIG_SID}"
+rm -f "$PATROL_CWD/.patrol/rules.json" 2>/dev/null
+run_hook session-start.sh "{\"session_id\":\"$MIG_SID\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+has_read_before_edit=$(jq '[.[] | select(.id=="read-before-edit")] | length' "$MIG_STATE/rules.json" 2>/dev/null || echo "0")
+assert_eq "investigation rule 'read-before-edit' loaded" "1" "$has_read_before_edit"
+
+has_investigate=$(jq '[.[] | select(.id=="investigate-first")] | length' "$MIG_STATE/rules.json" 2>/dev/null || echo "0")
+assert_eq "investigation rule 'investigate-first' loaded" "1" "$has_investigate"
+
+has_test_after=$(jq '[.[] | select(.id=="test-after-changes")] | length' "$MIG_STATE/rules.json" 2>/dev/null || echo "0")
+assert_eq "investigation rule 'test-after-changes' loaded" "1" "$has_test_after"
+
+# Test: investigation rules can be overridden by repo rules
+MIG_SID2="migrate-override-$$"
+reset_config
+reset_state "$MIG_SID2"
+MIG_STATE2="/tmp/patrol-${MIG_SID2}"
+mkdir -p "$PATROL_CWD/.patrol"
+cat > "$PATROL_CWD/.patrol/rules.json" <<'MIGEOF'
+{"version":"3.0","rules":[{"id":"read-before-edit","name":"Custom read rule","category":"workflow","level":"block","trigger":{"type":"sequence","pattern":"edit-without-read"},"message":"Custom: must read first"}]}
+MIGEOF
+run_hook session-start.sh "{\"session_id\":\"$MIG_SID2\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+level=$(jq -r '.[] | select(.id=="read-before-edit") | .level' "$MIG_STATE2/rules.json" 2>/dev/null)
+assert_eq "repo can override investigation rule level" "block" "$level"
+msg=$(jq -r '.[] | select(.id=="read-before-edit") | .message' "$MIG_STATE2/rules.json" 2>/dev/null)
+assert_match "repo overrides investigation rule message" "Custom" "$msg"
+rm -f "$PATROL_CWD/.patrol/rules.json" 2>/dev/null
+
+
+# ══════════════════════════════════════════════════════════════
+# 7. V3 integration — full rule flow
+# ══════════════════════════════════════════════════════════════
+printf "\n▸ V3 integration tests\n\n"
+
+# Test: Full flow — session-start loads rules → bash triggers → prompt enforces
+INT_SID="int-$$"
+reset_config
+reset_state "$INT_SID"
+INT_STATE="/tmp/patrol-${INT_SID}"
+
+# Create a repo rule: warn on git push without prior test
+mkdir -p "$PATROL_CWD/.patrol"
+cat > "$PATROL_CWD/.patrol/rules.json" <<'IEOF'
+{"version":"3.0","rules":[
+  {"id":"no-push-without-test","name":"Test before push","category":"workflow","level":"warn",
+   "trigger":{"type":"bash_command","match":"git push"},
+   "require":{"type":"bash_ran","match":"npm test|pnpm test"},
+   "message":"Run tests before pushing."}
+]}
+IEOF
+
+# Step 1: Session start — loads rules
+run_hook session-start.sh "{\"session_id\":\"$INT_SID\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+assert_file_exists "integration: rules cached after session-start" "$INT_STATE/rules.json"
+# Verify our custom rule is in the cache
+has_custom=$(jq '[.[] | select(.id=="no-push-without-test")] | length' "$INT_STATE/rules.json" 2>/dev/null)
+assert_eq "integration: custom rule loaded" "1" "$has_custom"
+
+# Step 2: Simulate git push WITHOUT prior test
+run_hook tool-tracker.sh "{\"session_id\":\"$INT_SID\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push origin main\"},\"cwd\":\"$PATROL_CWD\"}"
+assert_file_exists "integration: violation recorded" "$INT_STATE/violations.jsonl"
+v_count=$(wc -l < "$INT_STATE/violations.jsonl" 2>/dev/null | tr -d ' ')
+assert_eq "integration: exactly 1 violation" "1" "$v_count"
+
+# Step 3: Prompt monitor enforces the violation
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$INT_SID\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"done\"}")
+assert_match "integration: warning message shown" "Run tests before pushing" "$result"
+
+# Step 4: Violations cleared after enforcement
+v_after=$(cat "$INT_STATE/violations.jsonl" 2>/dev/null)
+assert_empty "integration: violations cleared after enforcement" "$v_after"
+
+# Test: Full flow — safety rule blocks force-push
+INT_SID2="int-safety-$$"
+reset_config
+reset_state "$INT_SID2"
+INT_STATE2="/tmp/patrol-${INT_SID2}"
+rm -f "$PATROL_CWD/.patrol/rules.json" 2>/dev/null
+
+# Step 1: Session start (only safety + investigation rules)
+run_hook session-start.sh "{\"session_id\":\"$INT_SID2\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+
+# Step 2: Simulate git push --force origin main
+run_hook tool-tracker.sh "{\"session_id\":\"$INT_SID2\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push --force origin main\"},\"cwd\":\"$PATROL_CWD\"}"
+assert_file_exists "integration: safety violation recorded" "$INT_STATE2/violations.jsonl"
+
+# Step 3: Prompt monitor shows block
+result=$(run_hook prompt-monitor.sh "{\"session_id\":\"$INT_SID2\",\"cwd\":\"$PATROL_CWD\",\"user_message\":\"push it\"}")
+assert_match "integration: block message for force-push" "BLOCKED" "$result"
+assert_match "integration: safety message shown" "Force-pushing to main" "$result"
+
+# Test: No violation when require is satisfied
+INT_SID3="int-require-$$"
+reset_config
+reset_state "$INT_SID3"
+INT_STATE3="/tmp/patrol-${INT_SID3}"
+mkdir -p "$PATROL_CWD/.patrol"
+cat > "$PATROL_CWD/.patrol/rules.json" <<'IEOF2'
+{"version":"3.0","rules":[
+  {"id":"test-first","name":"Test first","category":"workflow","level":"warn",
+   "trigger":{"type":"bash_command","match":"git push"},
+   "require":{"type":"bash_ran","match":"npm test"},
+   "message":"Run tests first"}
+]}
+IEOF2
+
+# Session start
+run_hook session-start.sh "{\"session_id\":\"$INT_SID3\",\"source\":\"startup\",\"cwd\":\"$PATROL_CWD\"}" >/dev/null
+
+# Run npm test first (satisfies require)
+run_hook tool-tracker.sh "{\"session_id\":\"$INT_SID3\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"npm test\"},\"cwd\":\"$PATROL_CWD\"}"
+
+# Then git push (trigger matches but require satisfied)
+run_hook tool-tracker.sh "{\"session_id\":\"$INT_SID3\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push origin main\"},\"cwd\":\"$PATROL_CWD\"}"
+
+# Should NOT have violations
+if [ -f "$INT_STATE3/violations.jsonl" ] && [ -s "$INT_STATE3/violations.jsonl" ]; then
+  has_v=$(grep -c "test-first" "$INT_STATE3/violations.jsonl" 2>/dev/null || echo "0")
+else
+  has_v="0"
+fi
+assert_eq "integration: no violation when require satisfied" "0" "$has_v"
+
+# Clean up
+rm -f "$PATROL_CWD/.patrol/rules.json" 2>/dev/null
+
+
+# ══════════════════════════════════════════════════════════════
 # Summary
 # ══════════════════════════════════════════════════════════════
 printf "\n══════════════════════════════════════════\n"
