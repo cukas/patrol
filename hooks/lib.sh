@@ -275,10 +275,20 @@ _patrol_ensure_statusline() {
     return 0
   fi
 
-  # Append snippet to existing command
+  # Insert snippet before the final 'echo "$status"' so patrol output is included.
+  # If we just append, the existing echo fires before patrol modifies $status.
   local new_command
   new_command=$(jq -r '.statusLine.command' "$settings_file" 2>/dev/null)
-  new_command="${new_command}; ${patrol_snippet}"
+  local before_echo="${new_command%echo \"\$status\"*}"
+  if [ "$before_echo" != "$new_command" ]; then
+    # Found echo "$status" — insert patrol snippet before it
+    before_echo="${before_echo%; }"
+    before_echo="${before_echo%;}"
+    new_command="${before_echo}; ${patrol_snippet}; echo \"\$status\""
+  else
+    # No echo "$status" found — append snippet and add echo
+    new_command="${new_command}; ${patrol_snippet}; echo \"\$status\""
+  fi
 
   # Write back atomically
   local tmp
